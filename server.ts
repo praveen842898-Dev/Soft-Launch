@@ -11,10 +11,27 @@ import { GoogleGenAI, Type, createPartFromUri } from '@google/genai';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT) || 3000;
+function resolvePort(): number {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i + 1]) {
+      const parsed = Number(args[i + 1]);
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    } else if (args[i].startsWith('--port=')) {
+      const parsed = Number(args[i].slice('--port='.length));
+      if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    }
+  }
+  const envPort = Number(process.env.PORT);
+  if (Number.isFinite(envPort) && envPort > 0) return envPort;
+  return 3000;
+}
+
+const PORT = resolvePort();
 const PRIMARY_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200 MB max (chunked safely under Cloud Run's 32 MB request limit)
+const INLINE_FALLBACK_MAX_BYTES = 15 * 1024 * 1024; // 15 MB safe inlineData fallback
 const CHUNK_SIZE_BYTES = 4 * 1024 * 1024; // 4 MB chunks
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -23,6 +40,34 @@ const ALLOWED_MIME_TYPES = new Set([
   'video/webm',
   'video/x-m4v',
 ]);
+
+function normalizeBaseMimeType(mimeType: string): string {
+  return (mimeType || '').split(';')[0].trim().toLowerCase();
+}
+
+function resolveVideoMimeType(mimeType: string, fileName: string): string {
+  const base = normalizeBaseMimeType(mimeType);
+  if (ALLOWED_MIME_TYPES.has(base)) {
+    return base === 'video/x-m4v' ? 'video/mp4' : base;
+  }
+  if (base.startsWith('video/')) {
+    return base;
+  }
+  const ext = path.extname(fileName || '').toLowerCase();
+  if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.webm') return 'video/webm';
+  return 'video/mp4';
+}
+
+function isValidVideoFile(mimeType: string, fileName: string): boolean {
+  const base = normalizeBaseMimeType(mimeType);
+  const ext = path.extname(fileName || '').toLowerCase();
+  return (
+    base.startsWith('video/') ||
+    ALLOWED_MIME_TYPES.has(base) ||
+    ['.mp4', '.mov', '.webm', '.m4v'].includes(ext)
+  );
+}
 
 const uploadDir = path.join(os.tmpdir(), 'soft-launch-uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -98,11 +143,7 @@ const upload = multer({
     fileSize: MAX_VIDEO_BYTES,
   },
   fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    if (
-      ALLOWED_MIME_TYPES.has(file.mimetype) ||
-      ['.mp4', '.mov', '.webm'].includes(ext)
-    ) {
+    if (isValidVideoFile(file.mimetype, file.originalname)) {
       cb(null, true);
     } else {
       cb(new Error('Please upload an MP4, MOV, or WebM video file.'));
@@ -125,28 +166,6 @@ function getGeminiClient(): GoogleGenAI {
       },
     },
   });
-}
-
-function resolveVideoMimeType(mimeType: string, fileName: string): string {
-  if (ALLOWED_MIME_TYPES.has(mimeType)) {
-    return mimeType === 'video/x-m4v' ? 'video/mp4' : mimeType;
-  }
-  if (mimeType && mimeType.startsWith('video/')) {
-    return mimeType;
-  }
-  const ext = path.extname(fileName || '').toLowerCase();
-  if (ext === '.mov') return 'video/quicktime';
-  if (ext === '.webm') return 'video/webm';
-  return 'video/mp4';
-}
-
-function isValidVideoFile(mimeType: string, fileName: string): boolean {
-  const ext = path.extname(fileName || '').toLowerCase();
-  return (
-    (mimeType && mimeType.startsWith('video/')) ||
-    ALLOWED_MIME_TYPES.has(mimeType) ||
-    ['.mp4', '.mov', '.webm', '.m4v'].includes(ext)
-  );
 }
 
 const analysisResponseSchema = {
@@ -567,8 +586,10 @@ async function waitForFileActive(ai: GoogleGenAI, fileName: string) {
       return fileInfo;
     }
     if (fileInfo.state === 'FAILED') {
+      const reason = fileInfo.error?.message ? ` (${fileInfo.error.message})` : '';
+      console.warn(`Gemini Files API processing failed for ${fileName}${reason}`);
       throw new Error(
-        'Video processing failed on the AI service. Please try exporting as MP4 and uploading again.'
+        'Video processing failed on the AI service. Please try exporting as MP4 (H.264) and uploading again.'
       );
     }
     await sleep(1500);
@@ -587,30 +608,58 @@ async function analyzeVideoFile(
 
   try {
     ai = getGeminiClient();
-
-    onStageChange?.('uploading_to_ai', 'Preparing your clip for private review');
-    const uploaded = await withTransientRetry(
-      () =>
-        ai!.files.upload({
-          file: filePath,
-          config: {
-            mimeType,
-            displayName: `soft-launch-take-${ctx.takeNumber}`,
-          },
-        }),
-      3,
-      2000
-    );
-
-    if (!uploaded.name) {
-      throw new Error('Failed to register video for analysis.');
+    const cleanMime = normalizeBaseMimeType(mimeType) || 'video/mp4';
+    const fileStats = fs.existsSync(filePath) ? fs.statSync(filePath) : null;
+    if (!fileStats || fileStats.size <= 0) {
+      throw new Error('Uploaded video file was empty. Please pick your video again.');
     }
-    uploadedFileName = uploaded.name;
 
-    onStageChange?.('processing_video', 'Processing video and audio');
-    const activeFile = await waitForFileActive(ai, uploaded.name);
-    if (!activeFile.uri) {
-      throw new Error('Video upload completed without a playable URI.');
+    let videoPart: unknown;
+
+    try {
+      onStageChange?.('uploading_to_ai', 'Preparing your clip for private review');
+      const uploaded = await withTransientRetry(
+        () =>
+          ai!.files.upload({
+            file: filePath,
+            config: {
+              mimeType: cleanMime,
+              displayName: `soft-launch-take-${ctx.takeNumber}`,
+            },
+          }),
+        3,
+        2000
+      );
+
+      if (!uploaded.name) {
+        throw new Error('Failed to register video for analysis.');
+      }
+      uploadedFileName = uploaded.name;
+
+      onStageChange?.('processing_video', 'Processing video and audio');
+      const activeFile = await waitForFileActive(ai, uploaded.name);
+      if (!activeFile.uri) {
+        throw new Error('Video upload completed without a playable URI.');
+      }
+      videoPart = createPartFromUri(activeFile.uri, activeFile.mimeType || cleanMime);
+    } catch (fileApiErr) {
+      // If Gemini Files API transcoding fails on a smaller clip, fall back to direct inline video bytes
+      if (fileStats.size <= INLINE_FALLBACK_MAX_BYTES) {
+        console.warn(
+          'Gemini Files API failed; retrying with direct inline video upload:',
+          extractRawErrorMessage(fileApiErr)
+        );
+        onStageChange?.('processing_video', 'Retrying video processing with direct upload');
+        const base64Data = fs.readFileSync(filePath).toString('base64');
+        videoPart = {
+          inlineData: {
+            mimeType: cleanMime,
+            data: base64Data,
+          },
+        };
+      } else {
+        throw fileApiErr;
+      }
     }
 
     onStageChange?.('analyzing', 'Watching and writing your coaching notes');
@@ -653,10 +702,7 @@ Carefully watch and listen to the full clip. Evaluate:
     return await generateWithFallback(
       ai,
       {
-        contents: [
-          createPartFromUri(activeFile.uri, activeFile.mimeType || mimeType),
-          userPrompt,
-        ],
+        contents: [videoPart, userPrompt],
         systemInstruction,
         responseSchema: analysisResponseSchema,
       },
@@ -1015,9 +1061,9 @@ Write an honest, warm, grounded Launch Readiness verdict celebrating concrete pr
 
   const distPath = path.resolve(__dirname, 'dist');
   const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const runningViaTsx = process.execArgv.some((arg) => arg.includes('tsx'));
   const useViteDev =
-    process.env.SOFT_LAUNCH_DEV === '1' ||
-    (process.env.NODE_ENV !== 'production' && !hasBuiltDist);
+    process.env.NODE_ENV !== 'production' && (runningViaTsx || !hasBuiltDist);
 
   if (useViteDev) {
     const { createServer: createViteServer } = await import('vite');
@@ -1034,7 +1080,9 @@ Write an honest, warm, grounded Launch Readiness verdict celebrating concrete pr
   }
 
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Soft Launch server running on http://0.0.0.0:${PORT}`);
+    console.log(
+      `Soft Launch server running on http://0.0.0.0:${PORT} (${useViteDev ? 'dev' : 'production'})`
+    );
   });
   server.keepAliveTimeout = 65000;
   server.headersTimeout = 66000;

@@ -67,6 +67,52 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function analyzeViaDirectUpload(
+    payload: PendingUpload,
+    activeProfile: UserProfile,
+    previousFocus: string
+  ): Promise<VideoAnalysis> {
+    const formData = new FormData();
+    formData.append('video', payload.file);
+    formData.append('niche', activeProfile.niche);
+    formData.append('goal', activeProfile.goal);
+    formData.append('initialConfidence', String(activeProfile.initialConfidence));
+    formData.append('topic', payload.topicNote);
+    formData.append('takeNumber', String(payload.takeNumber));
+    formData.append('durationSeconds', String(payload.durationSeconds));
+    formData.append('previousFocus', previousFocus);
+
+    setUploadProgress(null);
+    setStageLabel('Uploading privately to your AI coach');
+
+    const response = await fetch('/api/analyze-video', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData,
+    });
+
+    if (response.redirected || response.headers.get('content-type')?.includes('text/html')) {
+      throw new Error(
+        'Your session refreshed on the live preview. Please reload the page once and upload your clip again.'
+      );
+    }
+
+    if (response.status === 404 || response.status === 405) {
+      throw new Error(
+        'The video coaching backend (/api) is not reachable on this URL (HTTP 404). Make sure the live deployment is running the full-stack Node server (npm start) rather than static-only hosting, then refresh and try again.'
+      );
+    }
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.analysis) {
+      throw new Error(
+        data.error || `Upload failed (HTTP ${response.status}). Please try again.`
+      );
+    }
+
+    return data.analysis as VideoAnalysis;
+  }
+
   async function analyzeViaSingleStream(
     payload: PendingUpload,
     activeProfile: UserProfile,
@@ -97,8 +143,8 @@ export default function App() {
       );
     }
 
-    if (response.status === 413) {
-      throw new Error('PAYLOAD_TOO_LARGE');
+    if (response.status === 413 || response.status === 404 || response.status === 405) {
+      throw new Error('FALLBACK_UPLOAD_MODE');
     }
 
     if (!response.ok) {
@@ -124,42 +170,39 @@ export default function App() {
     let buffer = '';
     let result: VideoAnalysis | null = null;
 
+    const handleStreamLine = (rawLine: string) => {
+      const line = rawLine.trim();
+      if (!line) return;
+      let event: { type?: string; label?: string; analysis?: VideoAnalysis; error?: string };
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (event.type === 'stage' && typeof event.label === 'string') {
+        setStageLabel(event.label);
+      } else if (event.type === 'completed' && event.analysis) {
+        result = event.analysis;
+      } else if (event.type === 'error') {
+        throw new Error(event.error || 'Video analysis failed.');
+      }
+    };
+
     while (true) {
       const { value, done } = await reader.read();
       if (value) {
         buffer += decoder.decode(value, { stream: !done });
         const lines = buffer.split('\n');
         buffer = lines.pop() ?? '';
-
         for (const rawLine of lines) {
-          const line = rawLine.trim();
-          if (!line) continue;
-          try {
-            const event = JSON.parse(line);
-            if (event.type === 'stage' && typeof event.label === 'string') {
-              setStageLabel(event.label);
-            } else if (event.type === 'completed' && event.analysis) {
-              result = event.analysis as VideoAnalysis;
-            } else if (event.type === 'error') {
-              throw new Error(event.error || 'Video analysis failed.');
-            }
-          } catch (parseErr) {
-            if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {
-              throw parseErr;
-            }
-          }
+          handleStreamLine(rawLine);
         }
       }
       if (done) break;
     }
 
     if (buffer.trim()) {
-      const event = JSON.parse(buffer.trim());
-      if (event.type === 'completed' && event.analysis) {
-        result = event.analysis as VideoAnalysis;
-      } else if (event.type === 'error') {
-        throw new Error(event.error || 'Video analysis failed.');
-      }
+      handleStreamLine(buffer);
     }
 
     if (!result) {
@@ -191,6 +234,10 @@ export default function App() {
       throw new Error(
         'Your session refreshed on the live preview. Please reload the page once and upload your clip again.'
       );
+    }
+
+    if (initRes.status === 404 || initRes.status === 405) {
+      throw new Error('FALLBACK_DIRECT_MODE');
     }
 
     const initData = await initRes.json().catch(() => ({}));
@@ -341,22 +388,33 @@ export default function App() {
       const previousFocus = latestTake?.analysis.focus_for_next_take || '';
 
       // Prefer single stateless streaming upload for clips <= 25 MB (works across multi-instance Cloud Run),
-      // and fall back automatically to 4 MB chunked upload for larger clips or 413 responses.
+      // and fall back automatically to 4 MB chunked upload -> direct upload if needed.
       const STREAM_LIMIT_BYTES = 25 * 1024 * 1024;
       let analysisResult: VideoAnalysis;
+
+      const runWithChunkAndDirectFallback = async () => {
+        try {
+          return await analyzeViaChunkedUpload(payload, profile, previousFocus);
+        } catch (chunkErr) {
+          if (chunkErr instanceof Error && chunkErr.message === 'FALLBACK_DIRECT_MODE') {
+            return await analyzeViaDirectUpload(payload, profile, previousFocus);
+          }
+          throw chunkErr;
+        }
+      };
 
       if (payload.file.size <= STREAM_LIMIT_BYTES) {
         try {
           analysisResult = await analyzeViaSingleStream(payload, profile, previousFocus);
         } catch (streamErr) {
-          if (streamErr instanceof Error && streamErr.message === 'PAYLOAD_TOO_LARGE') {
-            analysisResult = await analyzeViaChunkedUpload(payload, profile, previousFocus);
+          if (streamErr instanceof Error && streamErr.message === 'FALLBACK_UPLOAD_MODE') {
+            analysisResult = await runWithChunkAndDirectFallback();
           } else {
             throw streamErr;
           }
         }
       } else {
-        analysisResult = await analyzeViaChunkedUpload(payload, profile, previousFocus);
+        analysisResult = await runWithChunkAndDirectFallback();
       }
 
       const id = `take-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
