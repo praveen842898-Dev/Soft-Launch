@@ -67,6 +67,212 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function analyzeViaStatelessResumableUpload(
+    payload: PendingUpload,
+    activeProfile: UserProfile,
+    previousFocus: string
+  ): Promise<VideoAnalysis> {
+    setUploadProgress(0);
+    setStageLabel('Starting private upload');
+
+    // Step 1: Start stateless resumable Gemini upload session
+    const startRes = await fetch('/api/gemini-upload/start', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: payload.file.name,
+        mimeType: payload.file.type,
+        fileSize: payload.file.size,
+        takeNumber: payload.takeNumber,
+      }),
+    });
+
+    if (startRes.redirected || startRes.headers.get('content-type')?.includes('text/html')) {
+      throw new Error(
+        'Your session refreshed. Please reload the page once and upload your clip again.'
+      );
+    }
+
+    if (startRes.status === 404 || startRes.status === 405) {
+      throw new Error('FALLBACK_UPLOAD_MODE');
+    }
+
+    const startData = await startRes.json().catch(() => ({}));
+    if (!startRes.ok || !startData.uploadToken) {
+      throw new Error(
+        startData.error ||
+          `Could not start the upload (HTTP ${startRes.status}). Please try again.`
+      );
+    }
+
+    const uploadToken: string = startData.uploadToken;
+    const chunkSize: number = startData.chunkSize || 10 * 256 * 1024;
+    const totalBytes = payload.file.size;
+
+    // Step 2: Upload video in <= 2.5 MB chunks (safe under Vercel's 4.5 MB serverless limit)
+    let offset = 0;
+    let uploadedFile: {
+      fileName: string;
+      fileUri: string;
+      mimeType: string;
+      state: string;
+    } | null = null;
+
+    setStageLabel('Uploading privately to your AI coach');
+
+    while (offset < totalBytes) {
+      const end = Math.min(offset + chunkSize, totalBytes);
+      const isFinal = end >= totalBytes;
+      const chunkBlob = payload.file.slice(offset, end);
+
+      let chunkSucceeded = false;
+      let lastChunkErr: unknown = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const chunkRes = await fetch('/api/gemini-upload/chunk', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type': 'application/octet-stream',
+              'x-upload-token': uploadToken,
+              'x-upload-offset': String(offset),
+              'x-upload-final': isFinal ? '1' : '0',
+            },
+            body: chunkBlob,
+          });
+
+          const chunkData = await chunkRes.json().catch(() => ({}));
+          if (!chunkRes.ok) {
+            throw new Error(
+              chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}). Please try again.`
+            );
+          }
+
+          if (isFinal) {
+            if (!chunkData.fileName || !chunkData.fileUri) {
+              throw new Error('Upload completed without a video reference. Please try again.');
+            }
+            uploadedFile = {
+              fileName: chunkData.fileName,
+              fileUri: chunkData.fileUri,
+              mimeType: chunkData.mimeType || startData.mimeType || 'video/mp4',
+              state: chunkData.state || 'PROCESSING',
+            };
+          }
+
+          chunkSucceeded = true;
+          break;
+        } catch (err) {
+          lastChunkErr = err;
+          if (attempt < 2) {
+            await sleep(700 * (attempt + 1));
+          }
+        }
+      }
+
+      if (!chunkSucceeded) {
+        throw lastChunkErr instanceof Error
+          ? new Error(
+              lastChunkErr.message === 'Failed to fetch'
+                ? 'Connection dropped while uploading your video. Please check your internet and tap Try again.'
+                : lastChunkErr.message
+            )
+          : new Error('Connection dropped while uploading your video.');
+      }
+
+      offset = end;
+      setUploadProgress(Math.min(100, Math.round((offset / totalBytes) * 100)));
+    }
+
+    if (!uploadedFile) {
+      throw new Error('Could not finalize video upload. Please try again.');
+    }
+
+    // Step 3: Poll Gemini processing status until ACTIVE (fast stateless calls)
+    setUploadProgress(100);
+    setStageLabel('Processing video and audio');
+
+    let activeFileUri = uploadedFile.fileUri;
+    let activeMimeType = uploadedFile.mimeType;
+
+    if (uploadedFile.state !== 'ACTIVE') {
+      let isActive = false;
+      for (let i = 0; i < 60; i++) {
+        await sleep(1500);
+        const statusRes = await fetch('/api/gemini-upload/status', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileName: uploadedFile.fileName }),
+        });
+
+        const statusData = await statusRes.json().catch(() => ({}));
+        if (!statusRes.ok) {
+          throw new Error(
+            statusData.error || `Could not check video processing status (HTTP ${statusRes.status}).`
+          );
+        }
+
+        if (statusData.state === 'ACTIVE') {
+          if (statusData.fileUri) activeFileUri = statusData.fileUri;
+          if (statusData.mimeType) activeMimeType = statusData.mimeType;
+          isActive = true;
+          break;
+        }
+
+        if (statusData.state === 'FAILED') {
+          throw new Error(
+            statusData.error ||
+              'Video processing failed on the AI service. Please try exporting as MP4 (H.264) and uploading again.'
+          );
+        }
+      }
+
+      if (!isActive) {
+        throw new Error('Video took too long to process. Please try a shorter or smaller clip.');
+      }
+    }
+
+    // Step 4: Run Gemini coaching analysis on the ACTIVE file
+    setStageLabel('Watching and writing your coaching notes');
+
+    const analyzeRes = await fetch('/api/gemini-upload/analyze', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: uploadedFile.fileName,
+        fileUri: activeFileUri,
+        mimeType: activeMimeType,
+        niche: activeProfile.niche,
+        goal: activeProfile.goal,
+        initialConfidence: String(activeProfile.initialConfidence),
+        topic: payload.topicNote,
+        takeNumber: payload.takeNumber,
+        durationSeconds: payload.durationSeconds,
+        previousFocus,
+      }),
+    });
+
+    if (analyzeRes.redirected || analyzeRes.headers.get('content-type')?.includes('text/html')) {
+      throw new Error(
+        'Your session refreshed while analyzing. Please reload the page once and try again.'
+      );
+    }
+
+    const analyzeData = await analyzeRes.json().catch(() => ({}));
+    if (!analyzeRes.ok || !analyzeData.analysis) {
+      throw new Error(
+        analyzeData.error ||
+          `Video analysis failed (HTTP ${analyzeRes.status}). Please tap Try again.`
+      );
+    }
+
+    return analyzeData.analysis as VideoAnalysis;
+  }
+
   async function analyzeViaDirectUpload(
     payload: PendingUpload,
     activeProfile: UserProfile,
@@ -99,7 +305,7 @@ export default function App() {
 
     if (response.status === 404 || response.status === 405) {
       throw new Error(
-        'The video coaching backend (/api) is not reachable on this URL (HTTP 404). Make sure the live deployment is running the full-stack Node server (npm start) rather than static-only hosting, then refresh and try again.'
+        `The video coaching backend (/api) is not reachable on this URL (HTTP ${response.status}). Make sure you deployed the latest code including api/index.ts and vercel.json, then refresh and try again.`
       );
     }
 
@@ -211,170 +417,6 @@ export default function App() {
     return result;
   }
 
-  async function analyzeViaChunkedUpload(
-    payload: PendingUpload,
-    activeProfile: UserProfile,
-    previousFocus: string
-  ): Promise<VideoAnalysis> {
-    setUploadProgress(0);
-    setStageLabel('Preparing secure upload');
-
-    const initRes = await fetch('/api/uploads/init', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: payload.file.name,
-        mimeType: payload.file.type,
-        fileSize: payload.file.size,
-      }),
-    });
-
-    if (initRes.redirected || initRes.headers.get('content-type')?.includes('text/html')) {
-      throw new Error(
-        'Your session refreshed on the live preview. Please reload the page once and upload your clip again.'
-      );
-    }
-
-    if (initRes.status === 404 || initRes.status === 405) {
-      throw new Error('FALLBACK_DIRECT_MODE');
-    }
-
-    const initData = await initRes.json().catch(() => ({}));
-    if (!initRes.ok || !initData.uploadId) {
-      throw new Error(
-        initData.error ||
-          `Could not start the upload (HTTP ${initRes.status}). Please refresh and try again.`
-      );
-    }
-
-    const uploadId: string = initData.uploadId;
-    const chunkSize: number = initData.chunkSize || 4 * 1024 * 1024;
-
-    let offset = 0;
-    const totalBytes = payload.file.size;
-
-    while (offset < totalBytes) {
-      const end = Math.min(offset + chunkSize, totalBytes);
-      const chunkBlob = payload.file.slice(offset, end);
-
-      let chunkUploaded = false;
-      let lastChunkErr: unknown = null;
-
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const chunkRes = await fetch(`/api/uploads/${uploadId}/chunk`, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: chunkBlob,
-          });
-          const chunkData = await chunkRes.json().catch(() => ({}));
-          if (!chunkRes.ok) {
-            throw new Error(chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}).`);
-          }
-          chunkUploaded = true;
-          break;
-        } catch (err) {
-          lastChunkErr = err;
-          if (attempt < 2) {
-            await sleep(700 * (attempt + 1));
-          }
-        }
-      }
-
-      if (!chunkUploaded) {
-        throw lastChunkErr instanceof Error
-          ? new Error(
-              lastChunkErr.message === 'Failed to fetch'
-                ? 'Connection dropped while uploading your video. Please check your internet and tap Try again.'
-                : lastChunkErr.message
-            )
-          : new Error('Connection dropped while uploading your video.');
-      }
-
-      offset = end;
-      setUploadProgress(Math.min(100, Math.round((offset / totalBytes) * 100)));
-    }
-
-    setUploadProgress(100);
-    setStageLabel('Sending clip to your AI coach');
-
-    const startRes = await fetch(`/api/uploads/${uploadId}/analyze`, {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        niche: activeProfile.niche,
-        goal: activeProfile.goal,
-        initialConfidence: String(activeProfile.initialConfidence),
-        topic: payload.topicNote,
-        takeNumber: payload.takeNumber,
-        durationSeconds: payload.durationSeconds,
-        previousFocus,
-      }),
-    });
-
-    const startData = await startRes.json().catch(() => ({}));
-    if (!startRes.ok || !startData.jobId) {
-      throw new Error(
-        startData.error || `Could not start AI analysis (HTTP ${startRes.status}). Please try again.`
-      );
-    }
-
-    const jobId: string = startData.jobId;
-    let analysisResult: VideoAnalysis | null = null;
-    let consecutiveNetworkErrors = 0;
-    const maxPollAttempts = 120;
-
-    for (let i = 0; i < maxPollAttempts; i++) {
-      await sleep(2000);
-      try {
-        const pollRes = await fetch(`/api/analysis-jobs/${jobId}`, {
-          credentials: 'same-origin',
-          cache: 'no-store',
-        });
-        const pollData = await pollRes.json().catch(() => ({}));
-        consecutiveNetworkErrors = 0;
-
-        if (pollData.status === 'completed' && pollData.analysis) {
-          analysisResult = pollData.analysis as VideoAnalysis;
-          break;
-        }
-
-        if (pollData.status === 'failed' || !pollRes.ok) {
-          throw new Error(
-            pollData.error ||
-              'Something went wrong while analyzing your clip. Please try again.'
-          );
-        }
-
-        if (typeof pollData.stageNote === 'string' && pollData.stageNote.trim()) {
-          setStageLabel(pollData.stageNote.trim());
-        } else if (pollData.status === 'uploading_to_ai') {
-          setStageLabel('Preparing your clip for review');
-        } else if (pollData.status === 'processing_video') {
-          setStageLabel('Processing video and audio');
-        } else if (pollData.status === 'analyzing') {
-          setStageLabel('Watching and writing your coaching notes');
-        }
-      } catch (pollErr) {
-        const msg = pollErr instanceof Error ? pollErr.message : '';
-        if (msg === 'Failed to fetch' && consecutiveNetworkErrors < 4) {
-          consecutiveNetworkErrors += 1;
-          continue;
-        }
-        throw pollErr;
-      }
-    }
-
-    if (!analysisResult) {
-      throw new Error('Analysis timed out. Please try a shorter clip or tap Try again.');
-    }
-
-    return analysisResult;
-  }
-
   async function runAnalysis(payload: PendingUpload) {
     if (!profile) return;
     setPendingUpload(payload);
@@ -387,34 +429,24 @@ export default function App() {
       const latestTake = takes.length > 0 ? takes[takes.length - 1] : null;
       const previousFocus = latestTake?.analysis.focus_for_next_take || '';
 
-      // Prefer single stateless streaming upload for clips <= 25 MB (works across multi-instance Cloud Run),
-      // and fall back automatically to 4 MB chunked upload -> direct upload if needed.
-      const STREAM_LIMIT_BYTES = 25 * 1024 * 1024;
       let analysisResult: VideoAnalysis;
-
-      const runWithChunkAndDirectFallback = async () => {
-        try {
-          return await analyzeViaChunkedUpload(payload, profile, previousFocus);
-        } catch (chunkErr) {
-          if (chunkErr instanceof Error && chunkErr.message === 'FALLBACK_DIRECT_MODE') {
-            return await analyzeViaDirectUpload(payload, profile, previousFocus);
+      try {
+        // Primary path: 100% stateless 2.5 MB resumable Gemini upload (works on Vercel + Cloud Run + Dev)
+        analysisResult = await analyzeViaStatelessResumableUpload(payload, profile, previousFocus);
+      } catch (resumableErr) {
+        if (resumableErr instanceof Error && resumableErr.message === 'FALLBACK_UPLOAD_MODE') {
+          try {
+            analysisResult = await analyzeViaSingleStream(payload, profile, previousFocus);
+          } catch (streamErr) {
+            if (streamErr instanceof Error && streamErr.message === 'FALLBACK_UPLOAD_MODE') {
+              analysisResult = await analyzeViaDirectUpload(payload, profile, previousFocus);
+            } else {
+              throw streamErr;
+            }
           }
-          throw chunkErr;
+        } else {
+          throw resumableErr;
         }
-      };
-
-      if (payload.file.size <= STREAM_LIMIT_BYTES) {
-        try {
-          analysisResult = await analyzeViaSingleStream(payload, profile, previousFocus);
-        } catch (streamErr) {
-          if (streamErr instanceof Error && streamErr.message === 'FALLBACK_UPLOAD_MODE') {
-            analysisResult = await runWithChunkAndDirectFallback();
-          } else {
-            throw streamErr;
-          }
-        }
-      } else {
-        analysisResult = await runWithChunkAndDirectFallback();
       }
 
       const id = `take-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
