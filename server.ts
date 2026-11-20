@@ -131,6 +131,9 @@ function resolveVideoMimeType(mimeType: string, fileName: string): string {
   if (ALLOWED_MIME_TYPES.has(mimeType)) {
     return mimeType === 'video/x-m4v' ? 'video/mp4' : mimeType;
   }
+  if (mimeType && mimeType.startsWith('video/')) {
+    return mimeType;
+  }
   const ext = path.extname(fileName || '').toLowerCase();
   if (ext === '.mov') return 'video/quicktime';
   if (ext === '.webm') return 'video/webm';
@@ -140,6 +143,7 @@ function resolveVideoMimeType(mimeType: string, fileName: string): string {
 function isValidVideoFile(mimeType: string, fileName: string): boolean {
   const ext = path.extname(fileName || '').toLowerCase();
   return (
+    (mimeType && mimeType.startsWith('video/')) ||
     ALLOWED_MIME_TYPES.has(mimeType) ||
     ['.mp4', '.mov', '.webm', '.m4v'].includes(ext)
   );
@@ -870,6 +874,69 @@ async function startServer() {
     return res.json({ status: job.status, stageNote: job.stageNote });
   });
 
+  // Single-request streaming analysis endpoint (stateless for multi-instance Cloud Run + keepalive heartbeats)
+  app.post('/api/analyze-video-stream', (req, res) => {
+    upload.single('video')(req, res, async (uploadErr) => {
+      if (uploadErr) {
+        const message =
+          uploadErr instanceof multer.MulterError && uploadErr.code === 'LIMIT_FILE_SIZE'
+            ? 'That video is over 200 MB. Try trimming it under 3 minutes or using standard phone quality.'
+            : uploadErr.message || 'Could not upload your video.';
+        return res.status(400).json({ error: message });
+      }
+
+      const file = req.file;
+      if (!file) {
+        return res.status(400).json({ error: 'No video file was received. Please pick a video and try again.' });
+      }
+
+      const ctx: AnalysisContext = {
+        niche: String(req.body.niche || 'Other').slice(0, 80),
+        goal: String(req.body.goal || 'Feel less awkward on camera').slice(0, 140),
+        initialConfidence: String(req.body.initialConfidence || '3').slice(0, 10),
+        topic: String(req.body.topic || '').trim().slice(0, 300),
+        takeNumber: Number(req.body.takeNumber) || 1,
+        durationSeconds: Number(req.body.durationSeconds) || 0,
+        previousFocus: String(req.body.previousFocus || '').trim().slice(0, 240),
+      };
+
+      res.status(200);
+      res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.flushHeaders?.();
+
+      const writeEvent = (payload: Record<string, unknown>) => {
+        if (!res.writableEnded) {
+          res.write(`${JSON.stringify(payload)}\n`);
+        }
+      };
+
+      const heartbeat = setInterval(() => {
+        writeEvent({ type: 'heartbeat' });
+      }, 4000);
+
+      try {
+        const mimeType = resolveVideoMimeType(file.mimetype, file.originalname);
+        writeEvent({ type: 'stage', label: 'Preparing your clip for private review' });
+        const analysis = await analyzeVideoFile(file.path, mimeType, ctx, (_stage, note) => {
+          if (note) {
+            writeEvent({ type: 'stage', label: note });
+          }
+        });
+        writeEvent({ type: 'completed', analysis });
+      } catch (err) {
+        console.error('Streaming video analysis error:', err);
+        writeEvent({ type: 'error', error: formatFriendlyApiError(err) });
+      } finally {
+        clearInterval(heartbeat);
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+    });
+  });
+
   // Direct upload compatibility endpoint for smaller clips
   app.post('/api/analyze-video', (req, res) => {
     upload.single('video')(req, res, async (uploadErr) => {
@@ -941,7 +1008,18 @@ Write an honest, warm, grounded Launch Readiness verdict celebrating concrete pr
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  // Catch any unknown /api/* route as JSON instead of falling through to index.html
+  app.all('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
+  const distPath = path.resolve(__dirname, 'dist');
+  const hasBuiltDist = fs.existsSync(path.join(distPath, 'index.html'));
+  const useViteDev =
+    process.env.SOFT_LAUNCH_DEV === '1' ||
+    (process.env.NODE_ENV !== 'production' && !hasBuiltDist);
+
+  if (useViteDev) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -949,7 +1027,6 @@ Write an honest, warm, grounded Launch Readiness verdict celebrating concrete pr
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
       res.sendFile(path.join(distPath, 'index.html'));

@@ -67,157 +67,296 @@ export default function App() {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  async function analyzeViaSingleStream(
+    payload: PendingUpload,
+    activeProfile: UserProfile,
+    previousFocus: string
+  ): Promise<VideoAnalysis> {
+    const formData = new FormData();
+    formData.append('video', payload.file);
+    formData.append('niche', activeProfile.niche);
+    formData.append('goal', activeProfile.goal);
+    formData.append('initialConfidence', String(activeProfile.initialConfidence));
+    formData.append('topic', payload.topicNote);
+    formData.append('takeNumber', String(payload.takeNumber));
+    formData.append('durationSeconds', String(payload.durationSeconds));
+    formData.append('previousFocus', previousFocus);
+
+    setUploadProgress(null);
+    setStageLabel('Uploading privately to your AI coach');
+
+    const response = await fetch('/api/analyze-video-stream', {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: formData,
+    });
+
+    if (response.redirected || response.headers.get('content-type')?.includes('text/html')) {
+      throw new Error(
+        'Your session refreshed on the live preview. Please reload the page once and upload your clip again.'
+      );
+    }
+
+    if (response.status === 413) {
+      throw new Error('PAYLOAD_TOO_LARGE');
+    }
+
+    if (!response.ok) {
+      const errData = await response.json().catch(() => ({}));
+      throw new Error(
+        errData.error || `Upload failed (HTTP ${response.status}). Please try again.`
+      );
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      if (data.analysis) return data.analysis as VideoAnalysis;
+      throw new Error(data.error || 'Could not parse analysis response.');
+    }
+
+    if (!response.body) {
+      throw new Error('Could not read analysis stream from server.');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: VideoAnalysis | null = null;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (value) {
+        buffer += decoder.decode(value, { stream: !done });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const rawLine of lines) {
+          const line = rawLine.trim();
+          if (!line) continue;
+          try {
+            const event = JSON.parse(line);
+            if (event.type === 'stage' && typeof event.label === 'string') {
+              setStageLabel(event.label);
+            } else if (event.type === 'completed' && event.analysis) {
+              result = event.analysis as VideoAnalysis;
+            } else if (event.type === 'error') {
+              throw new Error(event.error || 'Video analysis failed.');
+            }
+          } catch (parseErr) {
+            if (parseErr instanceof Error && parseErr.message !== 'Unexpected end of JSON input') {
+              throw parseErr;
+            }
+          }
+        }
+      }
+      if (done) break;
+    }
+
+    if (buffer.trim()) {
+      const event = JSON.parse(buffer.trim());
+      if (event.type === 'completed' && event.analysis) {
+        result = event.analysis as VideoAnalysis;
+      } else if (event.type === 'error') {
+        throw new Error(event.error || 'Video analysis failed.');
+      }
+    }
+
+    if (!result) {
+      throw new Error('Analysis ended before your report was ready. Please tap Try again.');
+    }
+    return result;
+  }
+
+  async function analyzeViaChunkedUpload(
+    payload: PendingUpload,
+    activeProfile: UserProfile,
+    previousFocus: string
+  ): Promise<VideoAnalysis> {
+    setUploadProgress(0);
+    setStageLabel('Preparing secure upload');
+
+    const initRes = await fetch('/api/uploads/init', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        fileName: payload.file.name,
+        mimeType: payload.file.type,
+        fileSize: payload.file.size,
+      }),
+    });
+
+    if (initRes.redirected || initRes.headers.get('content-type')?.includes('text/html')) {
+      throw new Error(
+        'Your session refreshed on the live preview. Please reload the page once and upload your clip again.'
+      );
+    }
+
+    const initData = await initRes.json().catch(() => ({}));
+    if (!initRes.ok || !initData.uploadId) {
+      throw new Error(
+        initData.error ||
+          `Could not start the upload (HTTP ${initRes.status}). Please refresh and try again.`
+      );
+    }
+
+    const uploadId: string = initData.uploadId;
+    const chunkSize: number = initData.chunkSize || 4 * 1024 * 1024;
+
+    let offset = 0;
+    const totalBytes = payload.file.size;
+
+    while (offset < totalBytes) {
+      const end = Math.min(offset + chunkSize, totalBytes);
+      const chunkBlob = payload.file.slice(offset, end);
+
+      let chunkUploaded = false;
+      let lastChunkErr: unknown = null;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const chunkRes = await fetch(`/api/uploads/${uploadId}/chunk`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: chunkBlob,
+          });
+          const chunkData = await chunkRes.json().catch(() => ({}));
+          if (!chunkRes.ok) {
+            throw new Error(chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}).`);
+          }
+          chunkUploaded = true;
+          break;
+        } catch (err) {
+          lastChunkErr = err;
+          if (attempt < 2) {
+            await sleep(700 * (attempt + 1));
+          }
+        }
+      }
+
+      if (!chunkUploaded) {
+        throw lastChunkErr instanceof Error
+          ? new Error(
+              lastChunkErr.message === 'Failed to fetch'
+                ? 'Connection dropped while uploading your video. Please check your internet and tap Try again.'
+                : lastChunkErr.message
+            )
+          : new Error('Connection dropped while uploading your video.');
+      }
+
+      offset = end;
+      setUploadProgress(Math.min(100, Math.round((offset / totalBytes) * 100)));
+    }
+
+    setUploadProgress(100);
+    setStageLabel('Sending clip to your AI coach');
+
+    const startRes = await fetch(`/api/uploads/${uploadId}/analyze`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        niche: activeProfile.niche,
+        goal: activeProfile.goal,
+        initialConfidence: String(activeProfile.initialConfidence),
+        topic: payload.topicNote,
+        takeNumber: payload.takeNumber,
+        durationSeconds: payload.durationSeconds,
+        previousFocus,
+      }),
+    });
+
+    const startData = await startRes.json().catch(() => ({}));
+    if (!startRes.ok || !startData.jobId) {
+      throw new Error(
+        startData.error || `Could not start AI analysis (HTTP ${startRes.status}). Please try again.`
+      );
+    }
+
+    const jobId: string = startData.jobId;
+    let analysisResult: VideoAnalysis | null = null;
+    let consecutiveNetworkErrors = 0;
+    const maxPollAttempts = 120;
+
+    for (let i = 0; i < maxPollAttempts; i++) {
+      await sleep(2000);
+      try {
+        const pollRes = await fetch(`/api/analysis-jobs/${jobId}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        const pollData = await pollRes.json().catch(() => ({}));
+        consecutiveNetworkErrors = 0;
+
+        if (pollData.status === 'completed' && pollData.analysis) {
+          analysisResult = pollData.analysis as VideoAnalysis;
+          break;
+        }
+
+        if (pollData.status === 'failed' || !pollRes.ok) {
+          throw new Error(
+            pollData.error ||
+              'Something went wrong while analyzing your clip. Please try again.'
+          );
+        }
+
+        if (typeof pollData.stageNote === 'string' && pollData.stageNote.trim()) {
+          setStageLabel(pollData.stageNote.trim());
+        } else if (pollData.status === 'uploading_to_ai') {
+          setStageLabel('Preparing your clip for review');
+        } else if (pollData.status === 'processing_video') {
+          setStageLabel('Processing video and audio');
+        } else if (pollData.status === 'analyzing') {
+          setStageLabel('Watching and writing your coaching notes');
+        }
+      } catch (pollErr) {
+        const msg = pollErr instanceof Error ? pollErr.message : '';
+        if (msg === 'Failed to fetch' && consecutiveNetworkErrors < 4) {
+          consecutiveNetworkErrors += 1;
+          continue;
+        }
+        throw pollErr;
+      }
+    }
+
+    if (!analysisResult) {
+      throw new Error('Analysis timed out. Please try a shorter clip or tap Try again.');
+    }
+
+    return analysisResult;
+  }
+
   async function runAnalysis(payload: PendingUpload) {
     if (!profile) return;
     setPendingUpload(payload);
     setAnalysisError(null);
-    setUploadProgress(0);
-    setStageLabel('Preparing secure upload');
+    setUploadProgress(null);
+    setStageLabel('Preparing your clip');
     setView('analyzing');
 
     try {
-      // Step 1: Initialize chunked upload session
-      const initRes = await fetch('/api/uploads/init', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          fileName: payload.file.name,
-          mimeType: payload.file.type,
-          fileSize: payload.file.size,
-        }),
-      });
-
-      const initData = await initRes.json().catch(() => ({}));
-      if (!initRes.ok || !initData.uploadId) {
-        throw new Error(
-          initData.error || 'Could not start the upload. Please try again.'
-        );
-      }
-
-      const uploadId: string = initData.uploadId;
-      const chunkSize: number = initData.chunkSize || 4 * 1024 * 1024;
-
-      // Step 2: Upload file in 4 MB binary chunks (safely under Cloud Run 32 MB request limit)
-      let offset = 0;
-      const totalBytes = payload.file.size;
-
-      while (offset < totalBytes) {
-        const end = Math.min(offset + chunkSize, totalBytes);
-        const chunkBlob = payload.file.slice(offset, end);
-
-        let chunkUploaded = false;
-        let lastChunkErr: unknown = null;
-
-        for (let attempt = 0; attempt < 3; attempt++) {
-          try {
-            const chunkRes = await fetch(`/api/uploads/${uploadId}/chunk`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/octet-stream' },
-              body: chunkBlob,
-            });
-            const chunkData = await chunkRes.json().catch(() => ({}));
-            if (!chunkRes.ok) {
-              throw new Error(chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}).`);
-            }
-            chunkUploaded = true;
-            break;
-          } catch (err) {
-            lastChunkErr = err;
-            if (attempt < 2) {
-              await sleep(700 * (attempt + 1));
-            }
-          }
-        }
-
-        if (!chunkUploaded) {
-          throw lastChunkErr instanceof Error
-            ? new Error(
-                lastChunkErr.message === 'Failed to fetch'
-                  ? 'Connection dropped while uploading your video. Please check your internet and tap Try again.'
-                  : lastChunkErr.message
-              )
-            : new Error('Connection dropped while uploading your video.');
-        }
-
-        offset = end;
-        setUploadProgress(Math.min(100, Math.round((offset / totalBytes) * 100)));
-      }
-
-      // Step 3: Trigger background Gemini analysis job (avoids proxy 60s request timeout)
-      setUploadProgress(100);
-      setStageLabel('Sending clip to your AI coach');
-
       const latestTake = takes.length > 0 ? takes[takes.length - 1] : null;
-      const startRes = await fetch(`/api/uploads/${uploadId}/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          niche: profile.niche,
-          goal: profile.goal,
-          initialConfidence: String(profile.initialConfidence),
-          topic: payload.topicNote,
-          takeNumber: payload.takeNumber,
-          durationSeconds: payload.durationSeconds,
-          previousFocus: latestTake?.analysis.focus_for_next_take || '',
-        }),
-      });
+      const previousFocus = latestTake?.analysis.focus_for_next_take || '';
 
-      const startData = await startRes.json().catch(() => ({}));
-      if (!startRes.ok || !startData.jobId) {
-        throw new Error(
-          startData.error || 'Could not start AI analysis. Please try again.'
-        );
-      }
+      // Prefer single stateless streaming upload for clips <= 25 MB (works across multi-instance Cloud Run),
+      // and fall back automatically to 4 MB chunked upload for larger clips or 413 responses.
+      const STREAM_LIMIT_BYTES = 25 * 1024 * 1024;
+      let analysisResult: VideoAnalysis;
 
-      const jobId: string = startData.jobId;
-
-      // Step 4: Poll lightweight status endpoint until complete
-      let analysisResult: VideoAnalysis | null = null;
-      let consecutiveNetworkErrors = 0;
-      const maxPollAttempts = 120; // up to ~4 minutes
-
-      for (let i = 0; i < maxPollAttempts; i++) {
-        await sleep(2000);
+      if (payload.file.size <= STREAM_LIMIT_BYTES) {
         try {
-          const pollRes = await fetch(`/api/analysis-jobs/${jobId}`, {
-            cache: 'no-store',
-          });
-          const pollData = await pollRes.json().catch(() => ({}));
-          consecutiveNetworkErrors = 0;
-
-          if (pollData.status === 'completed' && pollData.analysis) {
-            analysisResult = pollData.analysis as VideoAnalysis;
-            break;
+          analysisResult = await analyzeViaSingleStream(payload, profile, previousFocus);
+        } catch (streamErr) {
+          if (streamErr instanceof Error && streamErr.message === 'PAYLOAD_TOO_LARGE') {
+            analysisResult = await analyzeViaChunkedUpload(payload, profile, previousFocus);
+          } else {
+            throw streamErr;
           }
-
-          if (pollData.status === 'failed' || !pollRes.ok) {
-            throw new Error(
-              pollData.error ||
-                'Something went wrong while analyzing your clip. Please try again.'
-            );
-          }
-
-          if (typeof pollData.stageNote === 'string' && pollData.stageNote.trim()) {
-            setStageLabel(pollData.stageNote.trim());
-          } else if (pollData.status === 'uploading_to_ai') {
-            setStageLabel('Preparing your clip for review');
-          } else if (pollData.status === 'processing_video') {
-            setStageLabel('Processing video and audio');
-          } else if (pollData.status === 'analyzing') {
-            setStageLabel('Watching and writing your coaching notes');
-          }
-        } catch (pollErr) {
-          const msg = pollErr instanceof Error ? pollErr.message : '';
-          if (msg === 'Failed to fetch' && consecutiveNetworkErrors < 4) {
-            consecutiveNetworkErrors += 1;
-            continue;
-          }
-          throw pollErr;
         }
-      }
-
-      if (!analysisResult) {
-        throw new Error('Analysis timed out. Please try a shorter clip or tap Try again.');
+      } else {
+        analysisResult = await analyzeViaChunkedUpload(payload, profile, previousFocus);
       }
 
       const id = `take-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
