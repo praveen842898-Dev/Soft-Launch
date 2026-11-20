@@ -138,38 +138,38 @@ export function UploadScreen({
         <button
           type="button"
           onClick={onBack}
-          className="min-h-[44px] px-3 -ml-3 rounded-xl text-sm font-medium text-[#5A6270] hover:text-[#14181F] hover:bg-[#ECEFF3] transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+          className="min-h-[44px] px-3 -ml-3 rounded-xl text-sm font-medium text-[#526075] hover:text-[#0F172A] hover:bg-[#E8EEF5] transition-colors inline-flex items-center gap-2 whitespace-nowrap shrink-0"
         >
           <ArrowLeft size={16} />
           <span>Back to practice room</span>
         </button>
-        <span className="font-mono text-xs text-[#5A6270] tabular-nums">
+        <span className="font-mono text-xs text-[#526075] tabular-nums">
           Take #{nextTakeNumber}
         </span>
       </div>
 
       <div className="space-y-2">
-        <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#14181F]">
+        <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
           Upload a practice video
         </h1>
-        <p className="text-sm sm:text-[15px] text-[#5A6270]">
+        <p className="text-sm sm:text-[15px] text-[#526075]">
           Rough takes are welcome. Talk to the camera like you&apos;re explaining an idea to one friend.
         </p>
       </div>
 
       {previousFocus && (
-        <div className="rounded-2xl bg-[#ECF7F3] border border-[#CBE7DD] p-4 sm:p-5 flex items-start gap-3">
-          <Sparkles size={18} className="text-[#157A5E] shrink-0 mt-0.5" aria-hidden="true" />
+        <div className="rounded-2xl bg-[#EFF6FF] border border-[#BFDBFE] p-4 sm:p-5 flex items-start gap-3">
+          <Sparkles size={18} className="text-[#1D4ED8] shrink-0 mt-0.5" aria-hidden="true" />
           <div className="space-y-0.5">
-            <p className="text-xs font-semibold text-[#157A5E]">
+            <p className="text-xs font-semibold text-[#1D4ED8]">
               Your focus cue from Take #{nextTakeNumber - 1}
             </p>
-            <p className="text-sm text-[#14181F] leading-relaxed">{previousFocus}</p>
+            <p className="text-sm text-[#0F172A] leading-relaxed">{previousFocus}</p>
           </div>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="bg-white border border-[#E6E8EC] rounded-3xl p-6 sm:p-8 space-y-6">
+      <form onSubmit={handleSubmit} className="bg-white border border-[#E2E8F0] rounded-3xl p-6 sm:p-8 space-y-6">
         {!selectedFile ? (
           <div
             onDragOver={(e) => {
@@ -180,8 +180,8 @@ export function UploadScreen({
             onDrop={handleDrop}
             className={`rounded-2xl border-2 border-dashed p-8 sm:p-12 text-center transition-colors ${
               isDragging
-                ? 'border-[#157A5E] bg-[#ECF7F3]'
-                : 'border-[#D5DBE3] bg-[#F8F9FA] hover:border-[#9CA6B5]'
+                ? 'border-[#1D4ED8] bg-[#EFF6FF]'
+                : 'border-[#D5DBE3] bg-[#F7F9FC] hover:border-[#9CA6B5]'
             }`}
           >
             <input
@@ -192,20 +192,20 @@ export function UploadScreen({
               className="hidden"
               id="video-upload-input"
             />
-            <div className="w-12 h-12 rounded-2xl bg-white border border-[#E6E8EC] text-[#157A5E] flex items-center justify-center mx-auto mb-4">
+            <div className="w-12 h-12 rounded-2xl bg-white border border-[#E2E8F0] text-[#1D4ED8] flex items-center justify-center mx-auto mb-4">
               <Upload size={22} />
             </div>
-            <p className="font-display text-lg font-semibold text-[#14181F]">
+            <p className="font-display text-lg font-semibold text-[#0F172A]">
               Drop your video here, or browse files
             </p>
-            <p className="text-xs sm:text-sm text-[#5A6270] mt-1.5">
+            <p className="text-xs sm:text-sm text-[#526075] mt-1.5">
               MP4, MOV, or WebM · Max 3 minutes · Up to 200 MB
             </p>
             <div className="mt-5">
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="min-h-[48px] px-6 py-3 rounded-xl bg-[#14181F] text-white text-sm font-semibold hover:bg-[#272E3A] transition-colors inline-flex items-center gap-2"
+                className="min-h-[48px] px-6 py-3 rounded-xl bg-[#0F172A] text-white text-sm font-semibold hover:bg-[#1E293B] transition-colors inline-flex items-center gap-2"
               >
                 <Film size={16} />
                 <span>Choose video</span>
@@ -214,7 +214,7 @@ export function UploadScreen({
           </div>
         ) : (
           <div className="space-y-4">
-            <div className="relative rounded-2xl overflow-hidden bg-[#11151B] border border-[#E6E8EC]">
+            <div className="relative rounded-2xl overflow-hidden bg-[#11151B] border border-[#E2E8F0]">
               {previewUrl && (
                 <video
                   src={previewUrl}
@@ -226,8 +226,8 @@ export function UploadScreen({
             </div>
 
             <div className="flex flex-wrap items-center justify-between gap-3 text-xs sm:text-sm">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#5A6270] min-w-0">
-                <span className="font-medium text-[#14181F] truncate max-w-[220px] sm:max-w-xs">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[#526075] min-w-0">
+                <span className="font-medium text-[#0F172A] truncate max-w-[220px] sm:max-w-xs">
                   {selectedFile.name}
                 </span>
                 <span aria-hidden="true">·</span>
@@ -243,7 +243,7 @@ export function UploadScreen({
               <button
                 type="button"
                 onClick={clearFile}
-                className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#5A6270] hover:text-[#14181F] hover:bg-[#F3F5F7] transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+                className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#526075] hover:text-[#0F172A] hover:bg-[#F1F5F9] transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
               >
                 <X size={14} />
                 <span>Pick a different video</span>
@@ -265,10 +265,10 @@ export function UploadScreen({
         <div className="space-y-2">
           <label
             htmlFor="topic-note"
-            className="block text-sm font-medium text-[#14181F]"
+            className="block text-sm font-medium text-[#0F172A]"
           >
             What is this video about?{' '}
-            <span className="font-normal text-[#5A6270]">(optional)</span>
+            <span className="font-normal text-[#526075]">(optional)</span>
           </label>
           <input
             id="topic-note"
@@ -277,20 +277,20 @@ export function UploadScreen({
             onChange={(e) => setTopicNote(e.target.value)}
             maxLength={200}
             placeholder="e.g. Sharing 3 lessons from my first freelance design client"
-            className="w-full min-h-[48px] px-4 py-3 rounded-xl border border-[#D5DBE3] bg-white text-sm text-[#14181F] placeholder:text-[#8A94A3] focus:outline-none focus:border-[#157A5E] focus:ring-2 focus:ring-[#157A5E]/15"
+            className="w-full min-h-[48px] px-4 py-3 rounded-xl border border-[#D5DBE3] bg-white text-sm text-[#0F172A] placeholder:text-[#8A94A3] focus:outline-none focus:border-[#1D4ED8] focus:ring-2 focus:ring-[#1D4ED8]/15"
           />
         </div>
 
-        <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-[#E6E8EC]">
-          <p className="text-xs sm:text-sm text-[#5A6270] flex items-center gap-2 pt-2 sm:pt-0">
-            <Lock size={15} className="text-[#157A5E] shrink-0" aria-hidden="true" />
+        <div className="pt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-t border-[#E2E8F0]">
+          <p className="text-xs sm:text-sm text-[#526075] flex items-center gap-2 pt-2 sm:pt-0">
+            <Lock size={15} className="text-[#1D4ED8] shrink-0" aria-hidden="true" />
             <span>Private by default. Only you can see this.</span>
           </p>
 
           <button
             type="submit"
             disabled={!selectedFile || checkingMetadata}
-            className="min-h-[48px] px-6 py-3 rounded-xl bg-[#157A5E] text-white text-sm font-semibold hover:bg-[#11644D] disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#157A5E]"
+            className="min-h-[48px] px-6 py-3 rounded-xl bg-[#1D4ED8] text-white text-sm font-semibold hover:bg-[#1E40AF] disabled:opacity-40 disabled:cursor-not-allowed transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1D4ED8]"
           >
             <span>{checkingMetadata ? 'Checking clip...' : 'Analyze my video'}</span>
           </button>

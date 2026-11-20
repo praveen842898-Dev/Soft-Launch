@@ -291,17 +291,23 @@ export default function App() {
   const isAnalyzing = view === 'analyzing';
 
   return (
-    <div className="min-h-screen bg-[#F8F9FA] text-[#14181F] flex flex-col">
+    <div className="min-h-screen bg-[#F7F9FC] text-[#0F172A] flex flex-col">
       {/* Top Bar: Clean 3-zone contract on desktop; non-sticky on mobile so only bottom tab bar is fixed (well under 15% cap) */}
-      <header className="w-full border-b border-[#E6E8EC] bg-white md:sticky md:top-0 md:z-30">
+      <header className="w-full border-b border-[#E2E8F0] bg-white md:sticky md:top-0 md:z-30">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-8">
           <button
             type="button"
             disabled={isAnalyzing}
             onClick={() => setView('dashboard')}
-            className="font-display text-lg font-bold tracking-tight text-[#14181F] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#157A5E]"
+            className="inline-flex items-center gap-2 font-display text-lg font-bold tracking-tight text-[#0F172A] whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1D4ED8]"
           >
-            Soft Launch
+            <img
+              src="/assets/aistudio/Frame_82_cb640462.png"
+              alt="Soft Launch logo"
+              referrerPolicy="no-referrer"
+              className="h-7 w-auto object-contain mix-blend-multiply hue-rotate-[58deg] saturate-125 shrink-0"
+            />
+            <span>Soft Launch</span>
           </button>
 
           <nav
@@ -314,8 +320,8 @@ export default function App() {
               onClick={() => setView('dashboard')}
               className={`py-1 transition-colors whitespace-nowrap shrink-0 ${
                 view === 'dashboard' || view === 'report'
-                  ? 'text-[#14181F] underline underline-offset-8 decoration-[#157A5E] decoration-2'
-                  : 'text-[#5A6270] hover:text-[#14181F]'
+                  ? 'text-[#0F172A] underline underline-offset-8 decoration-[#1D4ED8] decoration-2'
+                  : 'text-[#526075] hover:text-[#0F172A]'
               }`}
             >
               Practice
@@ -326,8 +332,8 @@ export default function App() {
               onClick={() => setView('progress')}
               className={`py-1 transition-colors whitespace-nowrap shrink-0 ${
                 view === 'progress'
-                  ? 'text-[#14181F] underline underline-offset-8 decoration-[#157A5E] decoration-2'
-                  : 'text-[#5A6270] hover:text-[#14181F]'
+                  ? 'text-[#0F172A] underline underline-offset-8 decoration-[#1D4ED8] decoration-2'
+                  : 'text-[#526075] hover:text-[#0F172A]'
               }`}
             >
               Progress
@@ -338,8 +344,8 @@ export default function App() {
               onClick={() => setView('settings')}
               className={`py-1 transition-colors whitespace-nowrap shrink-0 ${
                 view === 'settings'
-                  ? 'text-[#14181F] underline underline-offset-8 decoration-[#157A5E] decoration-2'
-                  : 'text-[#5A6270] hover:text-[#14181F]'
+                  ? 'text-[#0F172A] underline underline-offset-8 decoration-[#1D4ED8] decoration-2'
+                  : 'text-[#526075] hover:text-[#0F172A]'
               }`}
             >
               Profile
@@ -351,7 +357,7 @@ export default function App() {
               type="button"
               disabled={isAnalyzing}
               onClick={() => setView('upload')}
-              className="min-h-[40px] px-4 py-2 rounded-xl bg-[#157A5E] text-white text-xs sm:text-sm font-semibold hover:bg-[#11644D] disabled:opacity-40 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#157A5E]"
+              className="min-h-[40px] px-4 py-2 rounded-xl bg-[#1D4ED8] text-white text-xs sm:text-sm font-semibold hover:bg-[#1E40AF] disabled:opacity-40 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1D4ED8]"
             >
               Upload take
             </button>
@@ -444,7 +450,7 @@ export default function App() {
       {!isAnalyzing && (
         <nav
           aria-label="Mobile navigation"
-          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E6E8EC] pb-safe"
+          className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-white/95 backdrop-blur-md border-t border-[#E2E8F0] pb-safe"
         >
           <div className="grid grid-cols-4 h-[60px]">
             <button
@@ -452,8 +458,8 @@ export default function App() {
               onClick={() => setView('dashboard')}
               className={`flex flex-col items-center justify-center gap-1 min-h-[44px] ${
                 view === 'dashboard' || view === 'report'
-                  ? 'text-[#157A5E]'
-                  : 'text-[#5A6270]'
+                  ? 'text-[#1D4ED8]'
+                  : 'text-[#526075]'
               }`}
             >
               <Home size={20} strokeWidth={view === 'dashboard' || view === 'report' ? 2.2 : 1.8} />
@@ -464,7 +470,7 @@ export default function App() {
               type="button"
               onClick={() => setView('upload')}
               className={`flex flex-col items-center justify-center gap-1 min-h-[44px] ${
-                view === 'upload' ? 'text-[#157A5E]' : 'text-[#5A6270]'
+                view === 'upload' ? 'text-[#1D4ED8]' : 'text-[#526075]'
               }`}
             >
               <Upload size={20} strokeWidth={view === 'upload' ? 2.2 : 1.8} />
@@ -475,7 +481,7 @@ export default function App() {
               type="button"
               onClick={() => setView('progress')}
               className={`flex flex-col items-center justify-center gap-1 min-h-[44px] ${
-                view === 'progress' ? 'text-[#157A5E]' : 'text-[#5A6270]'
+                view === 'progress' ? 'text-[#1D4ED8]' : 'text-[#526075]'
               }`}
             >
               <TrendingUp size={20} strokeWidth={view === 'progress' ? 2.2 : 1.8} />
@@ -486,7 +492,7 @@ export default function App() {
               type="button"
               onClick={() => setView('settings')}
               className={`flex flex-col items-center justify-center gap-1 min-h-[44px] ${
-                view === 'settings' ? 'text-[#157A5E]' : 'text-[#5A6270]'
+                view === 'settings' ? 'text-[#1D4ED8]' : 'text-[#526075]'
               }`}
             >
               <User size={20} strokeWidth={view === 'settings' ? 2.2 : 1.8} />

@@ -12,15 +12,15 @@ export function ReadinessText({ label, size = 'md' }: ReadinessTextProps) {
     { colorClass: string; Icon: typeof CheckCircle2 }
   > = {
     'Ready to launch': {
-      colorClass: 'text-[#157A5E]',
+      colorClass: 'text-[#15803D]',
       Icon: CheckCircle2,
     },
     'Almost there': {
-      colorClass: 'text-[#B86B11]',
+      colorClass: 'text-[#B45309]',
       Icon: Sparkles,
     },
     'Not ready yet': {
-      colorClass: 'text-[#5A6270]',
+      colorClass: 'text-[#DC2626]',
       Icon: Clock,
     },
   };

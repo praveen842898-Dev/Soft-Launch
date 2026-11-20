@@ -75,8 +75,8 @@ function ScoreLineChart({
         >
           <defs>
             <linearGradient id="vibeAreaGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#157A5E" stopOpacity="0.16" />
-              <stop offset="100%" stopColor="#157A5E" stopOpacity="0" />
+              <stop offset="0%" stopColor="#1D4ED8" stopOpacity="0.16" />
+              <stop offset="100%" stopColor="#1D4ED8" stopOpacity="0" />
             </linearGradient>
           </defs>
 
@@ -90,7 +90,7 @@ function ScoreLineChart({
                   y1={y}
                   x2={width - padX}
                   y2={y}
-                  stroke="#ECEFF3"
+                  stroke="#E8EEF5"
                   strokeWidth="1"
                 />
                 <text
@@ -110,7 +110,7 @@ function ScoreLineChart({
           <path
             d={linePath}
             fill="none"
-            stroke="#157A5E"
+            stroke="#1D4ED8"
             strokeWidth="3"
             strokeLinecap="round"
             strokeLinejoin="round"
@@ -118,6 +118,8 @@ function ScoreLineChart({
 
           {points.map((pt, idx) => {
             const isActive = idx === activeIndex;
+            const nodeColor =
+              pt.score >= 78 ? '#16A34A' : pt.score >= 62 ? '#D97706' : '#DC2626';
             return (
               <g
                 key={pt.take.id}
@@ -130,8 +132,8 @@ function ScoreLineChart({
                   cx={pt.x}
                   cy={pt.y}
                   r={isActive ? 7 : 5}
-                  fill={isActive ? '#157A5E' : '#FFFFFF'}
-                  stroke="#157A5E"
+                  fill={isActive ? nodeColor : '#FFFFFF'}
+                  stroke={nodeColor}
                   strokeWidth="3"
                 />
                 <text
@@ -139,7 +141,7 @@ function ScoreLineChart({
                   y={pt.y - 14}
                   textAnchor="middle"
                   className={`font-mono text-[12px] font-semibold ${
-                    isActive ? 'fill-[#14181F]' : 'fill-[#5A6270]'
+                    isActive ? 'fill-[#0F172A]' : 'fill-[#526075]'
                   }`}
                 >
                   {pt.score}
@@ -149,7 +151,7 @@ function ScoreLineChart({
                   y={height - 10}
                   textAnchor="middle"
                   className={`font-mono text-[11px] ${
-                    isActive ? 'fill-[#14181F] font-semibold' : 'fill-[#5A6270]'
+                    isActive ? 'fill-[#0F172A] font-semibold' : 'fill-[#526075]'
                   }`}
                 >
                   Take #{pt.take.takeNumber}
@@ -161,10 +163,10 @@ function ScoreLineChart({
       </div>
 
       {activePoint && (
-        <div className="rounded-2xl bg-[#F8F9FA] border border-[#E6E8EC] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="rounded-2xl bg-[#F7F9FC] border border-[#E2E8F0] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="space-y-0.5 min-w-0">
-            <div className="flex flex-wrap items-center gap-x-2 text-xs text-[#5A6270]">
-              <span className="font-mono font-semibold text-[#14181F] tabular-nums">
+            <div className="flex flex-wrap items-center gap-x-2 text-xs text-[#526075]">
+              <span className="font-mono font-semibold text-[#0F172A] tabular-nums">
                 Take #{activePoint.take.takeNumber}
               </span>
               <span aria-hidden="true">·</span>
@@ -177,14 +179,14 @@ function ScoreLineChart({
                 size="sm"
               />
             </div>
-            <p className="text-sm text-[#14181F] truncate">
+            <p className="text-sm text-[#0F172A] truncate">
               &ldquo;{activePoint.take.analysis.vibe_check_summary}&rdquo;
             </p>
           </div>
           <button
             type="button"
             onClick={() => onSelectTake(activePoint.take.id)}
-            className="min-h-[44px] px-3 py-2 text-xs font-semibold text-[#157A5E] hover:text-[#11644D] inline-flex items-center gap-1 whitespace-nowrap shrink-0 self-start sm:self-center"
+            className="min-h-[44px] px-3 py-2 text-xs font-semibold text-[#1D4ED8] hover:text-[#1E40AF] inline-flex items-center gap-1 whitespace-nowrap shrink-0 self-start sm:self-center"
           >
             <span>Open report</span>
             <ArrowRight size={14} />
@@ -265,18 +267,24 @@ export function ProgressSummary({
     const remaining = Math.max(0, 3 - takes.length);
     return (
       <div className="max-w-2xl mx-auto py-8 sm:py-12">
-        <div className="bg-white border border-[#E6E8EC] rounded-3xl p-8 sm:p-10 text-center space-y-6">
-          <div className="w-12 h-12 rounded-2xl bg-[#F3F5F7] text-[#5A6270] flex items-center justify-center mx-auto">
+        <div className="bg-white border border-[#E2E8F0] rounded-3xl p-8 sm:p-10 text-center space-y-6">
+          <div className="w-12 h-12 rounded-2xl bg-[#F1F5F9] text-[#526075] flex items-center justify-center mx-auto">
             <Lock size={22} />
           </div>
           <div className="space-y-2 max-w-md mx-auto">
-            <p className="font-mono text-xs font-semibold text-[#157A5E] tabular-nums">
-              {takes.length} of 3 practice videos uploaded
+            <p
+              className={`font-mono text-xs font-semibold tabular-nums ${
+                takes.length === 0 ? 'text-[#DC2626]' : 'text-[#B45309]'
+              }`}
+            >
+              {takes.length === 0
+                ? 'Not started · 0 of 3 practice videos uploaded'
+                : `${takes.length} of 3 practice videos uploaded`}
             </p>
-            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#14181F]">
+            <h1 className="font-display text-2xl sm:text-3xl font-bold tracking-tight text-[#0F172A]">
               Progress Summary unlocks after 3 takes
             </h1>
-            <p className="text-sm text-[#5A6270] leading-relaxed">
+            <p className="text-sm text-[#526075] leading-relaxed">
               Upload {remaining} more private practice {remaining === 1 ? 'video' : 'videos'} to unlock your score trend chart, first-vs-latest breakdown, and final Launch Readiness verdict.
             </p>
           </div>
@@ -286,7 +294,13 @@ export function ProgressSummary({
               <div
                 key={step}
                 className={`h-2 rounded-full ${
-                  takes.length >= step ? 'bg-[#157A5E]' : 'bg-[#E6E8EC]'
+                  takes.length === 0
+                    ? step === 1
+                      ? 'bg-[#FECACA]'
+                      : 'bg-[#E2E8F0]'
+                    : takes.length >= step
+                      ? 'bg-[#D97706]'
+                      : 'bg-[#E2E8F0]'
                 }`}
               />
             ))}
@@ -296,7 +310,7 @@ export function ProgressSummary({
             <button
               type="button"
               onClick={onUploadNext}
-              className="min-h-[48px] px-6 py-3 rounded-xl bg-[#157A5E] text-white text-sm font-semibold hover:bg-[#11644D] transition-colors inline-flex items-center gap-2"
+              className="min-h-[48px] px-6 py-3 rounded-xl bg-[#1D4ED8] text-white text-sm font-semibold hover:bg-[#1E40AF] transition-colors inline-flex items-center gap-2"
             >
               <Upload size={16} />
               <span>Upload Take #{takes.length + 1}</span>
@@ -329,10 +343,10 @@ export function ProgressSummary({
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div className="space-y-1.5">
-          <p className="text-xs font-medium text-[#157A5E] tabular-nums">
+          <p className="text-xs font-medium text-[#1D4ED8] tabular-nums">
             Progress Summary · {takes.length} takes compared
           </p>
-          <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#14181F]">
+          <h1 className="font-display text-2xl sm:text-3xl lg:text-4xl font-bold tracking-tight text-[#0F172A]">
             Look how far your delivery has come.
           </h1>
         </div>
@@ -340,7 +354,7 @@ export function ProgressSummary({
         <button
           type="button"
           onClick={onUploadNext}
-          className="min-h-[48px] px-5 py-3 rounded-xl bg-[#157A5E] text-white text-sm font-semibold hover:bg-[#11644D] transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 self-start sm:self-auto"
+          className="min-h-[48px] px-5 py-3 rounded-xl bg-[#1D4ED8] text-white text-sm font-semibold hover:bg-[#1E40AF] transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0 self-start sm:self-auto"
         >
           <Upload size={16} />
           <span>Upload Take #{takes.length + 1}</span>
@@ -348,10 +362,10 @@ export function ProgressSummary({
       </div>
 
       {/* Final Launch Readiness Verdict Card */}
-      <section className="bg-white border border-[#E6E8EC] rounded-3xl p-6 sm:p-8 space-y-5">
+      <section className="bg-white border border-[#E2E8F0] rounded-3xl p-6 sm:p-8 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-xs font-semibold text-[#5A6270]">
+            <span className="text-xs font-semibold text-[#526075]">
               Launch Readiness verdict
             </span>
             <span aria-hidden="true" className="text-[#D0D5DD]">·</span>
@@ -368,7 +382,7 @@ export function ProgressSummary({
             type="button"
             disabled={loadingVerdict}
             onClick={() => fetchVerdict(true)}
-            className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#5A6270] hover:text-[#14181F] hover:bg-[#F3F5F7] disabled:opacity-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            className="min-h-[44px] px-3 py-2 rounded-xl text-xs font-medium text-[#526075] hover:text-[#0F172A] hover:bg-[#F1F5F9] disabled:opacity-50 transition-colors inline-flex items-center gap-1.5 whitespace-nowrap shrink-0"
           >
             <RefreshCw size={13} className={loadingVerdict ? 'animate-spin' : ''} />
             <span>{loadingVerdict ? 'Writing verdict...' : 'Refresh verdict'}</span>
@@ -377,50 +391,50 @@ export function ProgressSummary({
 
         {loadingVerdict && !verdict ? (
           <div className="space-y-3 py-2 animate-pulse">
-            <div className="h-6 bg-[#ECEFF3] rounded-lg w-2/3" />
+            <div className="h-6 bg-[#E8EEF5] rounded-lg w-2/3" />
             <div className="h-4 bg-[#F2F4F7] rounded-lg w-full" />
             <div className="h-4 bg-[#F2F4F7] rounded-lg w-5/6" />
           </div>
         ) : verdict ? (
           <div className="space-y-4">
-            <h2 className="font-display text-xl sm:text-2xl font-bold text-[#14181F]">
+            <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0F172A]">
               {verdict.headline}
             </h2>
-            <p className="text-sm sm:text-[15px] text-[#5A6270] leading-relaxed max-w-3xl">
+            <p className="text-sm sm:text-[15px] text-[#526075] leading-relaxed max-w-3xl">
               {verdict.verdict_summary}
             </p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-              <div className="rounded-2xl bg-[#ECF7F3] border border-[#CBE7DD] p-5 space-y-1">
-                <p className="text-xs font-semibold text-[#157A5E]">Biggest win</p>
-                <p className="text-sm text-[#14181F] leading-relaxed">{verdict.biggest_win}</p>
+              <div className="rounded-2xl bg-[#F0FDF4] border border-[#BBF7D0] p-5 space-y-1">
+                <p className="text-xs font-semibold text-[#15803D]">Biggest win</p>
+                <p className="text-sm text-[#0F172A] leading-relaxed">{verdict.biggest_win}</p>
               </div>
-              <div className="rounded-2xl bg-[#F8F9FA] border border-[#E6E8EC] p-5 space-y-1">
-                <p className="text-xs font-semibold text-[#14181F]">Your next move</p>
-                <p className="text-sm text-[#5A6270] leading-relaxed">{verdict.final_nudge}</p>
+              <div className="rounded-2xl bg-[#F7F9FC] border border-[#E2E8F0] p-5 space-y-1">
+                <p className="text-xs font-semibold text-[#0F172A]">Your next move</p>
+                <p className="text-sm text-[#526075] leading-relaxed">{verdict.final_nudge}</p>
               </div>
             </div>
           </div>
         ) : (
           <div className="space-y-2">
-            <p className="text-sm sm:text-[15px] text-[#14181F] leading-relaxed">
+            <p className="text-sm sm:text-[15px] text-[#0F172A] leading-relaxed">
               {latestTake.analysis.launch_estimate.summary}
             </p>
             {verdictError && (
-              <p className="text-xs text-[#C03A4A]">{verdictError}</p>
+              <p className="text-xs text-[#DC2626]">{verdictError}</p>
             )}
           </div>
         )}
       </section>
 
       {/* Score Trend Line Chart */}
-      <section className="bg-white border border-[#E6E8EC] rounded-3xl p-6 sm:p-8 space-y-5">
+      <section className="bg-white border border-[#E2E8F0] rounded-3xl p-6 sm:p-8 space-y-5">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
           <div className="space-y-1">
-            <h2 className="font-display text-xl font-bold text-[#14181F] inline-flex items-center gap-2">
-              <TrendingUp size={18} className="text-[#157A5E]" aria-hidden="true" />
+            <h2 className="font-display text-xl font-bold text-[#0F172A] inline-flex items-center gap-2">
+              <TrendingUp size={18} className="text-[#1D4ED8]" aria-hidden="true" />
               <span>Vibe Check score across takes</span>
             </h2>
-            <p className="text-xs sm:text-sm text-[#5A6270]">
+            <p className="text-xs sm:text-sm text-[#526075]">
               Tap any point to inspect that take&apos;s summary.
             </p>
           </div>
@@ -428,10 +442,10 @@ export function ProgressSummary({
             <span
               className={
                 scoreDelta > 0
-                  ? 'text-[#157A5E]'
+                  ? 'text-[#15803D]'
                   : scoreDelta < 0
-                    ? 'text-[#C03A4A]'
-                    : 'text-[#5A6270]'
+                    ? 'text-[#DC2626]'
+                    : 'text-[#526075]'
               }
             >
               {scoreDelta > 0 ? `+${scoreDelta}` : scoreDelta} pts overall
@@ -445,11 +459,11 @@ export function ProgressSummary({
       {/* Side-by-side First Take vs Latest Take */}
       <section className="space-y-5">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="font-display text-xl sm:text-2xl font-bold text-[#14181F]">
+          <h2 className="font-display text-xl sm:text-2xl font-bold text-[#0F172A]">
             First take vs. latest take
           </h2>
           {biggestJump && biggestJump.delta > 0 && (
-            <span className="text-xs font-medium text-[#157A5E]">
+            <span className="text-xs font-medium text-[#15803D]">
               Biggest jump: {biggestJump.label} (+{biggestJump.delta})
             </span>
           )}
@@ -458,10 +472,10 @@ export function ProgressSummary({
         {/* High-level side-by-side cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch">
           {/* First take */}
-          <div className="bg-white border border-[#E6E8EC] rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-5">
+          <div className="bg-white border border-[#E2E8F0] rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-5">
             <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs text-[#5A6270]">
-                <span className="font-mono font-semibold text-[#14181F]">
+              <div className="flex items-center justify-between text-xs text-[#526075]">
+                <span className="font-mono font-semibold text-[#0F172A]">
                   First · Take #{firstTake.takeNumber}
                 </span>
                 <ReadinessText
@@ -471,27 +485,27 @@ export function ProgressSummary({
               </div>
 
               <div className="flex items-baseline gap-2.5">
-                <span className="font-mono text-4xl font-semibold text-[#14181F] tabular-nums">
+                <span className="font-mono text-4xl font-semibold text-[#0F172A] tabular-nums">
                   {firstTake.analysis.scores.vibe_check_score}
                 </span>
-                <span className="text-sm text-[#5A6270]">/ 100 Vibe Check</span>
+                <span className="text-sm text-[#526075]">/ 100 Vibe Check</span>
               </div>
 
-              <p className="text-sm text-[#5A6270] leading-relaxed">
+              <p className="text-sm text-[#526075] leading-relaxed">
                 &ldquo;{firstTake.analysis.vibe_check_summary}&rdquo;
               </p>
             </div>
 
-            <div className="pt-4 border-t border-[#E6E8EC] grid grid-cols-2 gap-4 text-xs">
+            <div className="pt-4 border-t border-[#E2E8F0] grid grid-cols-2 gap-4 text-xs">
               <div>
-                <p className="text-[#5A6270]">Speaking pace</p>
-                <p className="font-mono text-sm font-semibold text-[#14181F] tabular-nums mt-0.5">
+                <p className="text-[#526075]">Speaking pace</p>
+                <p className="font-mono text-sm font-semibold text-[#0F172A] tabular-nums mt-0.5">
                   ~{firstTake.analysis.speaking_pace.approx_wpm} wpm
                 </p>
               </div>
               <div>
-                <p className="text-[#5A6270]">Filler words</p>
-                <p className="font-mono text-sm font-semibold text-[#14181F] tabular-nums mt-0.5">
+                <p className="text-[#526075]">Filler words</p>
+                <p className="font-mono text-sm font-semibold text-[#0F172A] tabular-nums mt-0.5">
                   {firstFillers} total
                 </p>
               </div>
@@ -499,10 +513,10 @@ export function ProgressSummary({
           </div>
 
           {/* Latest take */}
-          <div className="bg-white border border-[#157A5E]/35 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-5">
+          <div className="bg-white border border-[#1D4ED8]/35 rounded-3xl p-6 sm:p-7 flex flex-col justify-between gap-5">
             <div className="space-y-3">
-              <div className="flex items-center justify-between text-xs text-[#5A6270]">
-                <span className="font-mono font-semibold text-[#157A5E]">
+              <div className="flex items-center justify-between text-xs text-[#526075]">
+                <span className="font-mono font-semibold text-[#1D4ED8]">
                   Latest · Take #{latestTake.takeNumber}
                 </span>
                 <ReadinessText
@@ -512,46 +526,46 @@ export function ProgressSummary({
               </div>
 
               <div className="flex items-baseline gap-3">
-                <span className="font-mono text-4xl font-semibold text-[#14181F] tabular-nums">
+                <span className="font-mono text-4xl font-semibold text-[#0F172A] tabular-nums">
                   {latestTake.analysis.scores.vibe_check_score}
                 </span>
-                <span className="text-sm text-[#5A6270]">/ 100 Vibe Check</span>
+                <span className="text-sm text-[#526075]">/ 100 Vibe Check</span>
                 <span
                   className={`font-mono text-xs font-semibold tabular-nums ${
                     scoreDelta > 0
-                      ? 'text-[#157A5E]'
+                      ? 'text-[#15803D]'
                       : scoreDelta < 0
-                        ? 'text-[#C03A4A]'
-                        : 'text-[#5A6270]'
+                        ? 'text-[#DC2626]'
+                        : 'text-[#526075]'
                   }`}
                 >
                   {scoreDelta > 0 ? `+${scoreDelta}` : scoreDelta}
                 </span>
               </div>
 
-              <p className="text-sm text-[#14181F] leading-relaxed">
+              <p className="text-sm text-[#0F172A] leading-relaxed">
                 &ldquo;{latestTake.analysis.vibe_check_summary}&rdquo;
               </p>
             </div>
 
-            <div className="pt-4 border-t border-[#E6E8EC] grid grid-cols-2 gap-4 text-xs">
+            <div className="pt-4 border-t border-[#E2E8F0] grid grid-cols-2 gap-4 text-xs">
               <div>
-                <p className="text-[#5A6270]">Speaking pace</p>
-                <p className="font-mono text-sm font-semibold text-[#14181F] tabular-nums mt-0.5">
+                <p className="text-[#526075]">Speaking pace</p>
+                <p className="font-mono text-sm font-semibold text-[#0F172A] tabular-nums mt-0.5">
                   ~{latestTake.analysis.speaking_pace.approx_wpm} wpm
                 </p>
               </div>
               <div>
-                <p className="text-[#5A6270]">Filler words</p>
-                <p className="font-mono text-sm font-semibold text-[#14181F] tabular-nums mt-0.5">
+                <p className="text-[#526075]">Filler words</p>
+                <p className="font-mono text-sm font-semibold text-[#0F172A] tabular-nums mt-0.5">
                   {latestFillers} total{' '}
                   <span
                     className={
                       fillerDelta < 0
-                        ? 'text-[#157A5E]'
+                        ? 'text-[#15803D]'
                         : fillerDelta > 0
-                          ? 'text-[#C03A4A]'
-                          : 'text-[#5A6270]'
+                          ? 'text-[#DC2626]'
+                          : 'text-[#526075]'
                     }
                   >
                     ({fillerDelta > 0 ? `+${fillerDelta}` : fillerDelta})
@@ -563,37 +577,37 @@ export function ProgressSummary({
         </div>
 
         {/* Category-by-category comparison table */}
-        <div className="bg-white border border-[#E6E8EC] rounded-3xl p-6 sm:p-7 space-y-4">
-          <div className="flex items-center justify-between text-xs text-[#5A6270] pb-2 border-b border-[#E6E8EC]">
+        <div className="bg-white border border-[#E2E8F0] rounded-3xl p-6 sm:p-7 space-y-4">
+          <div className="flex items-center justify-between text-xs text-[#526075] pb-2 border-b border-[#E2E8F0]">
             <span>Category</span>
             <div className="flex items-center gap-6 font-mono tabular-nums">
               <span className="w-12 text-right">Take #{firstTake.takeNumber}</span>
-              <span className="w-12 text-right text-[#14181F] font-semibold">
+              <span className="w-12 text-right text-[#0F172A] font-semibold">
                 Take #{latestTake.takeNumber}
               </span>
               <span className="w-14 text-right">Change</span>
             </div>
           </div>
 
-          <div className="divide-y divide-[#E6E8EC]">
+          <div className="divide-y divide-[#E2E8F0]">
             {categoryDeltas.map(({ key, label, first, latest, delta }) => (
               <div
                 key={key}
                 className="py-3.5 flex items-center justify-between gap-4 text-sm"
               >
-                <span className="font-medium text-[#14181F] truncate">{label}</span>
+                <span className="font-medium text-[#0F172A] truncate">{label}</span>
                 <div className="flex items-center gap-6 font-mono tabular-nums shrink-0">
-                  <span className="w-12 text-right text-[#5A6270]">{first}</span>
-                  <span className="w-12 text-right font-semibold text-[#14181F]">
+                  <span className="w-12 text-right text-[#526075]">{first}</span>
+                  <span className="w-12 text-right font-semibold text-[#0F172A]">
                     {latest}
                   </span>
                   <span
                     className={`w-14 text-right inline-flex items-center justify-end gap-0.5 text-xs font-semibold ${
                       delta > 0
-                        ? 'text-[#157A5E]'
+                        ? 'text-[#15803D]'
                         : delta < 0
-                          ? 'text-[#C03A4A]'
-                          : 'text-[#5A6270]'
+                          ? 'text-[#DC2626]'
+                          : 'text-[#526075]'
                     }`}
                   >
                     {delta > 0 ? (

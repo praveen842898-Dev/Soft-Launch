@@ -9,8 +9,8 @@
 @layer base {
   html {
     font-family: var(--font-sans);
-    background-color: #F8F9FA;
-    color: #14181F;
+    background-color: #F7F9FC;
+    color: #0F172A;
     scroll-behavior: smooth;
     -webkit-tap-highlight-color: transparent;
   }
