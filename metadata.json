@@ -1,0 +1,8 @@
+{
+  "name": "Soft Launch",
+  "description": "Practise privately. Launch confidently. A private AI video coaching platform for camera-shy creators.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
