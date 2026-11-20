@@ -712,6 +712,15 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  app.get('/favicon.ico', (_req, res) => {
+    const svgPath = path.resolve(__dirname, 'public', 'favicon.svg');
+    if (fs.existsSync(svgPath)) {
+      res.type('image/svg+xml');
+      return res.sendFile(svgPath);
+    }
+    return res.status(204).end();
+  });
+
   // 1. Initialize chunked upload session (bypasses Cloud Run 32 MB single-request limit)
   app.post('/api/uploads/init', (req, res) => {
     const fileName = String(req.body?.fileName || 'video.mp4').slice(0, 200);
