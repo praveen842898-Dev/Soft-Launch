@@ -11,7 +11,7 @@ const PRIMARY_MODEL = 'gemini-4-hydrogen';
 const FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200 MB max
 const INLINE_FALLBACK_MAX_BYTES = 15 * 1024 * 1024; // 15 MB inline fallback
-const RESUMABLE_CHUNK_BYTES = 10 * 256 * 1024; // 2.5 MB (exact multiple of 256 KB, safely under Vercel's 4.5 MB limit)
+const RESUMABLE_CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB (exact Gemini Files API chunk granularity)
 const LOCAL_CHUNK_BYTES = 4 * 1024 * 1024;
 const GEMINI_UPLOAD_ORIGIN = 'https://generativelanguage.googleapis.com/upload/';
 
@@ -843,19 +843,31 @@ export function registerApiRoutes(app: Express) {
       }
 
       const cleanMime = resolveVideoMimeType(mimeType, fileName);
+      let clientOrigin = typeof req.headers.origin === 'string' ? req.headers.origin.trim() : '';
+      if (!clientOrigin && typeof req.headers.referer === 'string') {
+        try {
+          clientOrigin = new URL(req.headers.referer).origin;
+        } catch {
+          clientOrigin = '';
+        }
+      }
+      const startHeaders: Record<string, string> = {
+        'x-goog-api-key': apiKey,
+        'User-Agent': 'aistudio-build',
+        'X-Goog-Upload-Protocol': 'resumable',
+        'X-Goog-Upload-Command': 'start',
+        'X-Goog-Upload-Header-Content-Length': String(fileSize),
+        'X-Goog-Upload-Header-Content-Type': cleanMime,
+        'Content-Type': 'application/json',
+      };
+      if (clientOrigin) {
+        startHeaders['Origin'] = clientOrigin;
+      }
 
       const startRes = await withTransientRetry(async () => {
         const r = await fetch('https://generativelanguage.googleapis.com/upload/v1beta/files', {
           method: 'POST',
-          headers: {
-            'x-goog-api-key': apiKey,
-            'User-Agent': 'aistudio-build',
-            'X-Goog-Upload-Protocol': 'resumable',
-            'X-Goog-Upload-Command': 'start',
-            'X-Goog-Upload-Header-Content-Length': String(fileSize),
-            'X-Goog-Upload-Header-Content-Type': cleanMime,
-            'Content-Type': 'application/json',
-          },
+          headers: startHeaders,
           body: JSON.stringify({
             file: {
               display_name: `soft-launch-take-${takeNumber}`,
@@ -882,9 +894,12 @@ export function registerApiRoutes(app: Express) {
       }
 
       const uploadToken = signUploadUrl(uploadUrl, apiKey);
+      const chunkGranularity =
+        Number(startRes.headers.get('x-goog-upload-chunk-granularity')) || RESUMABLE_CHUNK_BYTES;
       return res.json({
+        uploadUrl,
         uploadToken,
-        chunkSize: RESUMABLE_CHUNK_BYTES,
+        chunkSize: chunkGranularity,
         mimeType: cleanMime,
       });
     } catch (err) {

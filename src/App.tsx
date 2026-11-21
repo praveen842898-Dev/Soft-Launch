@@ -106,11 +106,45 @@ export default function App() {
       );
     }
 
+    const uploadUrl: string = startData.uploadUrl || '';
     const uploadToken: string = startData.uploadToken;
-    const chunkSize: number = startData.chunkSize || 10 * 256 * 1024;
+    const chunkSize: number = startData.chunkSize || 8 * 1024 * 1024;
     const totalBytes = payload.file.size;
 
-    // Step 2: Upload video in <= 2.5 MB chunks (safe under Vercel's 4.5 MB serverless limit)
+    const uploadChunkDirect = (
+      url: string,
+      blob: Blob,
+      byteOffset: number,
+      isFinalChunk: boolean
+    ): Promise<{ status: number; text: string }> =>
+      new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', url, true);
+        xhr.setRequestHeader('X-Goog-Upload-Offset', String(byteOffset));
+        xhr.setRequestHeader(
+          'X-Goog-Upload-Command',
+          isFinalChunk ? 'upload, finalize' : 'upload'
+        );
+        xhr.upload.onprogress = (ev) => {
+          if (ev.lengthComputable && totalBytes > 0) {
+            const uploadedSoFar = Math.min(totalBytes, byteOffset + ev.loaded);
+            setUploadProgress(Math.min(99, Math.round((uploadedSoFar / totalBytes) * 100)));
+          }
+        };
+        xhr.onload = () => {
+          resolve({ status: xhr.status, text: xhr.responseText || '' });
+        };
+        xhr.onerror = () => {
+          reject(new Error('Failed to fetch'));
+        };
+        xhr.onabort = () => {
+          reject(new Error('Upload was interrupted. Please try again.'));
+        };
+        xhr.send(blob);
+      });
+
+    // Step 2: Upload video in exact 8 MiB chunks directly to the server-minted Gemini resumable URL
+    // (no API key in browser, bypasses Vercel's 4.5 MB serverless body limit, supports up to 200 MB)
     let offset = 0;
     let uploadedFile: {
       fileName: string;
@@ -131,35 +165,68 @@ export default function App() {
 
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          const chunkRes = await fetch('/api/gemini-upload/chunk', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-              'Content-Type': 'application/octet-stream',
-              'x-upload-token': uploadToken,
-              'x-upload-offset': String(offset),
-              'x-upload-final': isFinal ? '1' : '0',
-            },
-            body: chunkBlob,
-          });
-
-          const chunkData = await chunkRes.json().catch(() => ({}));
-          if (!chunkRes.ok) {
-            throw new Error(
-              chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}). Please try again.`
-            );
-          }
-
-          if (isFinal) {
-            if (!chunkData.fileName || !chunkData.fileUri) {
-              throw new Error('Upload completed without a video reference. Please try again.');
+          if (uploadUrl) {
+            const directRes = await uploadChunkDirect(uploadUrl, chunkBlob, offset, isFinal);
+            if (directRes.status < 200 || directRes.status >= 300) {
+              let errText = directRes.text.trim();
+              try {
+                const parsedErr = JSON.parse(errText);
+                errText = parsedErr?.error?.message || parsedErr?.message || errText;
+              } catch {
+                // plain text error
+              }
+              throw new Error(
+                errText || `Upload interrupted (HTTP ${directRes.status}). Please try again.`
+              );
             }
-            uploadedFile = {
-              fileName: chunkData.fileName,
-              fileUri: chunkData.fileUri,
-              mimeType: chunkData.mimeType || startData.mimeType || 'video/mp4',
-              state: chunkData.state || 'PROCESSING',
-            };
+
+            if (isFinal) {
+              const parsed = JSON.parse(directRes.text || '{}') as {
+                file?: { name?: string; uri?: string; mimeType?: string; state?: string };
+              };
+              const file = parsed.file;
+              if (!file?.name || !file?.uri) {
+                throw new Error('Upload completed without a video reference. Please try again.');
+              }
+              uploadedFile = {
+                fileName: file.name,
+                fileUri: file.uri,
+                mimeType: file.mimeType || startData.mimeType || 'video/mp4',
+                state: file.state || 'PROCESSING',
+              };
+            }
+          } else {
+            // Fallback for older server responses without uploadUrl (works for single-chunk clips <= 4 MB)
+            const chunkRes = await fetch('/api/gemini-upload/chunk', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: {
+                'Content-Type': 'application/octet-stream',
+                'x-upload-token': uploadToken,
+                'x-upload-offset': String(offset),
+                'x-upload-final': isFinal ? '1' : '0',
+              },
+              body: chunkBlob,
+            });
+
+            const chunkData = await chunkRes.json().catch(() => ({}));
+            if (!chunkRes.ok) {
+              throw new Error(
+                chunkData.error || `Upload interrupted (HTTP ${chunkRes.status}). Please try again.`
+              );
+            }
+
+            if (isFinal) {
+              if (!chunkData.fileName || !chunkData.fileUri) {
+                throw new Error('Upload completed without a video reference. Please try again.');
+              }
+              uploadedFile = {
+                fileName: chunkData.fileName,
+                fileUri: chunkData.fileUri,
+                mimeType: chunkData.mimeType || startData.mimeType || 'video/mp4',
+                state: chunkData.state || 'PROCESSING',
+              };
+            }
           }
 
           chunkSucceeded = true;
