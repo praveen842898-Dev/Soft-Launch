@@ -50,12 +50,27 @@ function isValidVideoFile(mimeType: string, fileName: string): boolean {
   );
 }
 
+function resolveApiKey(): string {
+  const candidates = [
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    process.env.API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
+  ];
+  for (const candidate of candidates) {
+    const cleaned = (candidate || '').trim().replace(/^["']|["']$/g, '');
+    if (cleaned && cleaned !== 'MY_GEMINI_API_KEY') {
+      return cleaned;
+    }
+  }
+  return '';
+}
+
 function getApiKey(): string {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = resolveApiKey();
   if (!apiKey) {
-    throw new Error(
-      'GEMINI_API_KEY is not configured. Add GEMINI_API_KEY in your Vercel Project Environment Variables (or AI Studio Settings > Secrets) and redeploy.'
-    );
+    throw new Error('MISSING_GEMINI_API_KEY');
   }
   return apiKey;
 }
@@ -580,10 +595,21 @@ async function generateWithFallback(
         return JSON.parse(rawText);
       } catch (err) {
         lastError = err;
+        const errMsg = extractRawErrorMessage(err);
+        const lowerErr = errMsg.toLowerCase();
         console.warn(
           `Gemini ${tier.model} attempt ${attempt}/${tier.attempts} failed:`,
-          extractRawErrorMessage(err)
+          errMsg
         );
+        const isModelUnavailable =
+          lowerErr.includes('not_found') ||
+          lowerErr.includes('404') ||
+          lowerErr.includes('is not found') ||
+          lowerErr.includes('not supported');
+        if (isModelUnavailable) {
+          // Skip retries on this model and try the backup model in plan
+          break;
+        }
         if (!isTransientGeminiError(err)) {
           throw err;
         }
@@ -745,12 +771,14 @@ function formatFriendlyApiError(err: unknown): string {
   const raw = extractRawErrorMessage(err);
   const lower = raw.toLowerCase();
 
-  if (
-    lower.includes('api_key_invalid') ||
-    lower.includes('permission_denied') ||
-    lower.includes('gemini_api_key')
-  ) {
-    return 'Unable to connect to the AI coaching service. Make sure GEMINI_API_KEY is set in your deployment environment variables (or Settings > Secrets).';
+  if (raw === 'MISSING_GEMINI_API_KEY') {
+    return 'GEMINI_API_KEY is not set on this deployment yet. In Vercel → Project Settings → Environment Variables, add GEMINI_API_KEY for Production & Preview, then click Redeploy.';
+  }
+  if (lower.includes('api_key_invalid') || lower.includes('api key not valid')) {
+    return 'Google rejected your GEMINI_API_KEY as invalid. Double-check the key in Vercel Environment Variables (from aistudio.google.com/apikey), save, and redeploy.';
+  }
+  if (lower.includes('permission_denied') || lower.includes('403')) {
+    return 'Google returned Permission Denied for your GEMINI_API_KEY. Make sure the Generative Language API is enabled for that key and that it has no browser/HTTP referrer restrictions.';
   }
   if (lower.includes('resource_exhausted') || lower.includes('429')) {
     return 'The AI service is currently rate-limited. Wait a moment and try again, or use a billing-enabled Gemini API key.';
@@ -781,7 +809,11 @@ export function registerApiRoutes(app: Express) {
   app.use(express.json({ limit: '5mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, runtime: process.env.VERCEL ? 'vercel' : 'node' });
+    res.json({
+      ok: true,
+      runtime: process.env.VERCEL ? 'vercel' : 'node',
+      keyConfigured: Boolean(resolveApiKey()),
+    });
   });
 
   // ============================================================================
