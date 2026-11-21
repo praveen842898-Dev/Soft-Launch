@@ -829,6 +829,7 @@ export function registerApiRoutes(app: Express) {
       const mimeType = String(req.body?.mimeType || '');
       const fileSize = Number(req.body?.fileSize) || 0;
       const takeNumber = Number(req.body?.takeNumber) || 1;
+      const directUploadSupported = req.body?.directUploadSupported === true;
 
       if (!isValidVideoFile(mimeType, fileName)) {
         return res.status(400).json({ error: 'Please upload an MP4, MOV, or WebM video file.' });
@@ -839,6 +840,12 @@ export function registerApiRoutes(app: Express) {
       if (fileSize > MAX_VIDEO_BYTES) {
         return res.status(400).json({
           error: 'That video is over 200 MB. Try trimming it under 3 minutes or using standard phone quality.',
+        });
+      }
+      if (!directUploadSupported && fileSize > 4 * 1024 * 1024) {
+        return res.status(400).json({
+          error:
+            'A newer version of Soft Launch is live. Please refresh this page once and upload your clip again.',
         });
       }
 

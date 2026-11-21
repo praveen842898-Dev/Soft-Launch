@@ -79,12 +79,14 @@ export default function App() {
     const startRes = await fetch('/api/gemini-upload/start', {
       method: 'POST',
       credentials: 'same-origin',
+      cache: 'no-store',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         fileName: payload.file.name,
         mimeType: payload.file.type,
         fileSize: payload.file.size,
         takeNumber: payload.takeNumber,
+        directUploadSupported: true,
       }),
     });
 
@@ -110,6 +112,12 @@ export default function App() {
     const uploadToken: string = startData.uploadToken;
     const chunkSize: number = startData.chunkSize || 8 * 1024 * 1024;
     const totalBytes = payload.file.size;
+
+    if (!uploadUrl && totalBytes > 4 * 1024 * 1024) {
+      throw new Error(
+        'Your live deployment is still running an older backend version. Please redeploy the latest code on Vercel, hard-refresh this page, and try again.'
+      );
+    }
 
     const uploadChunkDirect = (
       url: string,
@@ -196,7 +204,7 @@ export default function App() {
               };
             }
           } else {
-            // Fallback for older server responses without uploadUrl (works for single-chunk clips <= 4 MB)
+            // Only reached for single-chunk clips <= 4 MB when uploadUrl isn't returned
             const chunkRes = await fetch('/api/gemini-upload/chunk', {
               method: 'POST',
               credentials: 'same-origin',
