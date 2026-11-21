@@ -5,10 +5,10 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import multer from 'multer';
-import { GoogleGenAI, Type, createPartFromUri } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type, createPartFromUri } from '@google/genai';
 
-const PRIMARY_MODEL = 'gemini-4-hydrogen';
-const FALLBACK_MODEL = 'gemini-3.1-flash-lite';
+const PRIMARY_MODEL = 'gemini-3.1-flash-lite';
+const FALLBACK_MODEL = 'gemini-4-hydrogen';
 const MAX_VIDEO_BYTES = 200 * 1024 * 1024; // 200 MB max
 const INLINE_FALLBACK_MAX_BYTES = 15 * 1024 * 1024; // 15 MB inline fallback
 const RESUMABLE_CHUNK_BYTES = 8 * 1024 * 1024; // 8 MiB (exact Gemini Files API chunk granularity)
@@ -549,26 +549,60 @@ async function withTransientRetry<T>(
   throw lastError;
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)}s`) as Error & {
+            status?: number;
+          };
+          err.status = 504;
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function generateWithFallback(
   ai: GoogleGenAI,
   params: {
     contents: unknown;
     systemInstruction: string;
     responseSchema: Record<string, unknown>;
+    fastMode?: boolean;
   },
   onStageNote?: (note: string) => void
 ) {
-  const plan: { model: string; attempts: number; label: string }[] = [
-    { model: PRIMARY_MODEL, attempts: 3, label: 'primary' },
-    { model: FALLBACK_MODEL, attempts: 2, label: 'backup' },
-  ];
+  const isVercel = Boolean(process.env.VERCEL);
+  const primaryTier = {
+    model: PRIMARY_MODEL,
+    thinkingLevel: ThinkingLevel.MINIMAL,
+    attempts: 2,
+    timeoutMs: isVercel ? 40000 : 50000,
+    label: 'primary',
+  };
+  const backupTier = {
+    model: FALLBACK_MODEL,
+    thinkingLevel: ThinkingLevel.LOW,
+    attempts: 1,
+    timeoutMs: isVercel ? 25000 : 45000,
+    label: 'backup',
+  };
+
+  const plan = params.fastMode ? [primaryTier] : [primaryTier, backupTier];
 
   let lastError: unknown;
 
   for (const tier of plan) {
     for (let attempt = 1; attempt <= tier.attempts; attempt++) {
       try {
-        if (tier.label === 'backup' && attempt === 1) {
+        if (tier.label === 'backup' && attempt === 1 && !params.fastMode) {
           onStageNote?.('Primary AI coach is busy — switching to our fast backup coach');
         } else if (attempt > 1) {
           onStageNote?.(
@@ -576,19 +610,32 @@ async function generateWithFallback(
           );
         }
 
-        const response = await ai.models.generateContent({
-          model: tier.model,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          contents: params.contents as any,
-          config: {
-            systemInstruction: params.systemInstruction,
-            responseMimeType: 'application/json',
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            responseSchema: params.responseSchema as any,
-          },
-        });
+        const rawText = await withTimeout(
+          (async () => {
+            const stream = await ai.models.generateContentStream({
+              model: tier.model,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              contents: params.contents as any,
+              config: {
+                systemInstruction: params.systemInstruction,
+                responseMimeType: 'application/json',
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                responseSchema: params.responseSchema as any,
+                thinkingConfig: {
+                  thinkingLevel: tier.thinkingLevel,
+                },
+              },
+            });
+            let collected = '';
+            for await (const chunk of stream) {
+              if (chunk.text) collected += chunk.text;
+            }
+            return collected.trim();
+          })(),
+          tier.timeoutMs,
+          `Gemini ${tier.model}`
+        );
 
-        const rawText = (response.text ?? '').trim();
         if (!rawText) {
           throw new Error('The AI coach returned an empty response. Please try analyzing again.');
         }
@@ -606,15 +653,15 @@ async function generateWithFallback(
           lowerErr.includes('404') ||
           lowerErr.includes('is not found') ||
           lowerErr.includes('not supported');
-        if (isModelUnavailable) {
-          // Skip retries on this model and try the backup model in plan
+        if (isModelUnavailable || lowerErr.includes('timed out')) {
+          // Immediately fail over to the next model in plan
           break;
         }
         if (!isTransientGeminiError(err)) {
           throw err;
         }
         if (attempt < tier.attempts) {
-          const delayMs = 2000 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 600);
+          const delayMs = 1500 * Math.pow(2, attempt - 1) + Math.floor(Math.random() * 400);
           await sleep(delayMs);
         }
       }
@@ -1038,11 +1085,12 @@ export function registerApiRoutes(app: Express) {
     }
   });
 
-  // Step 4: Run Gemini coaching analysis on the ACTIVE uploaded file & delete file immediately after
+  // Step 4: Stream NDJSON keepalives while running Gemini coaching analysis on the ACTIVE uploaded file
   app.post('/api/gemini-upload/analyze', async (req, res) => {
     const fileName = String(req.body?.fileName || '').trim();
     const fileUri = String(req.body?.fileUri || '').trim();
     const cleanMime = normalizeBaseMimeType(String(req.body?.mimeType || 'video/mp4')) || 'video/mp4';
+    const fastMode = req.body?.fastMode === true;
 
     if (!/^files\/[a-zA-Z0-9_-]+$/.test(fileName)) {
       return res.status(400).json({ error: 'Invalid video file reference.' });
@@ -1051,7 +1099,24 @@ export function registerApiRoutes(app: Express) {
       return res.status(400).json({ error: 'Invalid video URI.' });
     }
 
+    res.status(200);
+    res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    const writeEvent = (payload: Record<string, unknown>) => {
+      if (!res.writableEnded) {
+        res.write(`${JSON.stringify(payload)}\n`);
+      }
+    };
+
+    const heartbeat = setInterval(() => {
+      writeEvent({ type: 'heartbeat' });
+    }, 3000);
+
     let ai: GoogleGenAI | null = null;
+    let shouldDeleteFile = true;
     try {
       ai = getGeminiClient();
       const ctx: AnalysisContext = {
@@ -1065,20 +1130,42 @@ export function registerApiRoutes(app: Express) {
       };
 
       const { systemInstruction, userPrompt } = buildCoachingPrompts(ctx);
-
-      const analysis = await generateWithFallback(ai, {
-        contents: [createPartFromUri(fileUri, cleanMime), userPrompt],
-        systemInstruction,
-        responseSchema: analysisResponseSchema,
+      writeEvent({
+        type: 'stage',
+        label: fastMode
+          ? 'Finishing your coaching notes with our fast coach'
+          : 'Watching and writing your coaching notes',
       });
 
-      return res.json({ analysis });
+      const analysis = await generateWithFallback(
+        ai,
+        {
+          contents: [createPartFromUri(fileUri, cleanMime), userPrompt],
+          systemInstruction,
+          responseSchema: analysisResponseSchema,
+          fastMode,
+        },
+        (note) => writeEvent({ type: 'stage', label: note })
+      );
+
+      writeEvent({ type: 'completed', analysis });
     } catch (err) {
-      console.error('Gemini file analyze error:', err);
-      return res.status(500).json({ error: formatFriendlyApiError(err) });
+      const msg = extractRawErrorMessage(err).toLowerCase();
+      if (!fastMode && (msg.includes('timed out') || msg.includes('504'))) {
+        // Keep the uploaded file alive briefly so the client can immediately retry in fastMode without re-uploading
+        shouldDeleteFile = false;
+        writeEvent({ type: 'retry_fast', error: formatFriendlyApiError(err) });
+      } else {
+        console.error('Gemini file analyze error:', err);
+        writeEvent({ type: 'error', error: formatFriendlyApiError(err) });
+      }
     } finally {
-      if (ai && fileName) {
+      clearInterval(heartbeat);
+      if (shouldDeleteFile && ai && fileName) {
         ai.files.delete({ name: fileName }).catch(() => {});
+      }
+      if (!res.writableEnded) {
+        res.end();
       }
     }
   });

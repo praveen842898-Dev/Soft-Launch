@@ -310,42 +310,129 @@ export default function App() {
       }
     }
 
-    // Step 4: Run Gemini coaching analysis on the ACTIVE file
-    setStageLabel('Watching and writing your coaching notes');
-
-    const analyzeRes = await fetch('/api/gemini-upload/analyze', {
-      method: 'POST',
-      credentials: 'same-origin',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        fileName: uploadedFile.fileName,
-        fileUri: activeFileUri,
-        mimeType: activeMimeType,
-        niche: activeProfile.niche,
-        goal: activeProfile.goal,
-        initialConfidence: String(activeProfile.initialConfidence),
-        topic: payload.topicNote,
-        takeNumber: payload.takeNumber,
-        durationSeconds: payload.durationSeconds,
-        previousFocus,
-      }),
-    });
-
-    if (analyzeRes.redirected || analyzeRes.headers.get('content-type')?.includes('text/html')) {
-      throw new Error(
-        'Your session refreshed while analyzing. Please reload the page once and try again.'
+    // Step 4: Stream Gemini coaching analysis on the ACTIVE file (auto-retries once in fastMode on 504 without re-uploading)
+    const runAnalyzeStep = async (fastMode: boolean): Promise<VideoAnalysis> => {
+      setStageLabel(
+        fastMode
+          ? 'Switching to our fast AI coach to finish your notes'
+          : 'Watching and writing your coaching notes'
       );
-    }
 
-    const analyzeData = await analyzeRes.json().catch(() => ({}));
-    if (!analyzeRes.ok || !analyzeData.analysis) {
-      throw new Error(
-        analyzeData.error ||
-          `Video analysis failed (HTTP ${analyzeRes.status}). Please tap Try again.`
-      );
-    }
+      const analyzeRes = await fetch('/api/gemini-upload/analyze', {
+        method: 'POST',
+        credentials: 'same-origin',
+        cache: 'no-store',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileName: uploadedFile!.fileName,
+          fileUri: activeFileUri,
+          mimeType: activeMimeType,
+          niche: activeProfile.niche,
+          goal: activeProfile.goal,
+          initialConfidence: String(activeProfile.initialConfidence),
+          topic: payload.topicNote,
+          takeNumber: payload.takeNumber,
+          durationSeconds: payload.durationSeconds,
+          previousFocus,
+          fastMode,
+        }),
+      });
 
-    return analyzeData.analysis as VideoAnalysis;
+      if (analyzeRes.redirected || analyzeRes.headers.get('content-type')?.includes('text/html')) {
+        throw new Error(
+          'Your session refreshed while analyzing. Please reload the page once and try again.'
+        );
+      }
+
+      if (!analyzeRes.ok) {
+        if (!fastMode && [502, 503, 504].includes(analyzeRes.status)) {
+          throw new Error('RETRY_FAST_MODE');
+        }
+        const errData = await analyzeRes.json().catch(() => ({}));
+        throw new Error(
+          errData.error ||
+            `Video analysis failed (HTTP ${analyzeRes.status}). Please tap Try again.`
+        );
+      }
+
+      const contentType = analyzeRes.headers.get('content-type') || '';
+      if (contentType.includes('application/json')) {
+        const analyzeData = await analyzeRes.json().catch(() => ({}));
+        if (analyzeData.analysis) {
+          return analyzeData.analysis as VideoAnalysis;
+        }
+        throw new Error(analyzeData.error || 'Could not parse analysis response.');
+      }
+
+      if (!analyzeRes.body) {
+        throw new Error('Could not read analysis stream from server.');
+      }
+
+      const reader = analyzeRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let result: VideoAnalysis | null = null;
+      let shouldRetryFast = false;
+
+      const handleLine = (rawLine: string) => {
+        const line = rawLine.trim();
+        if (!line) return;
+        let event: { type?: string; label?: string; analysis?: VideoAnalysis; error?: string };
+        try {
+          event = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (event.type === 'stage' && typeof event.label === 'string') {
+          setStageLabel(event.label);
+        } else if (event.type === 'completed' && event.analysis) {
+          result = event.analysis;
+        } else if (event.type === 'retry_fast') {
+          shouldRetryFast = true;
+        } else if (event.type === 'error') {
+          throw new Error(event.error || 'Video analysis failed.');
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (value) {
+          buffer += decoder.decode(value, { stream: !done });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+          for (const line of lines) {
+            handleLine(line);
+          }
+        }
+        if (done) break;
+      }
+
+      if (buffer.trim()) {
+        handleLine(buffer);
+      }
+
+      if (shouldRetryFast && !fastMode) {
+        throw new Error('RETRY_FAST_MODE');
+      }
+
+      if (!result) {
+        if (!fastMode) {
+          throw new Error('RETRY_FAST_MODE');
+        }
+        throw new Error('Analysis ended before your report was ready. Please tap Try again.');
+      }
+
+      return result;
+    };
+
+    try {
+      return await runAnalyzeStep(false);
+    } catch (analyzeErr) {
+      if (analyzeErr instanceof Error && analyzeErr.message === 'RETRY_FAST_MODE') {
+        return await runAnalyzeStep(true);
+      }
+      throw analyzeErr;
+    }
   }
 
   async function analyzeViaDirectUpload(
